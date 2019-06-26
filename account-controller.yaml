@@ -1,0 +1,224 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: Custom resource provider for the account controller
+
+Parameters:
+
+    DomainName:
+        Description: The dedicated domain or subdomain
+        Type: String
+
+    2CaptchaApiKey:
+        Description: The API Key for 2captcha.com
+        Type: String
+
+    S3Bucket:
+        Description: The name of the bucket that contains the Lambda source (leave blank to use latest)
+        Type: String
+        Default: ''
+    
+    S3Key:
+        Description: The key of the ZIP package within the bucket (leave blank to use latest)
+        Type: String
+        Default: ''
+
+Conditions:
+
+    S3Defined: !Not [ !Equals [ '', !Ref S3Bucket ] ]
+
+Resources:
+
+    DebugBucket:
+        Type: AWS::S3::Bucket
+
+    HostedZone: 
+        Type: AWS::Route53::HostedZone
+        Properties:
+            Name: !Ref DomainName
+
+    MXRecord:
+        Type: AWS::Route53::RecordSet
+        Properties:
+            HostedZoneId: !Ref HostedZone
+            Name: !Sub '${DomainName}.'
+            Type: MX
+            TTL: '900'
+            ResourceRecords:
+              - !Sub 'inbound-smtp.${AWS::Region}.amazonaws.com'
+    
+    ServiceCatalogTerminateProductRule:
+        Type: AWS::Events::Rule
+        Properties:
+            Description: Detect Service Catalog provisioned product terminations
+            EventPattern: |
+                {
+                    "source": [
+                        "aws.servicecatalog"
+                    ],
+                    "detail": {
+                        "eventName": [
+                            "TerminateProvisionedProduct"
+                        ],
+                        "eventSource": [
+                            "servicecatalog.amazonaws.com"
+                        ]
+                    }
+                }
+            State: ENABLED
+            Targets:
+              - Arn: !GetAtt LambdaFunction.Arn
+                Id: Action
+
+    LambdaFunction:
+        Type: AWS::Lambda::Function
+        Properties:
+            Code:
+                S3Bucket: !If
+                    - S3Defined
+                    - !Ref S3Bucket
+                    - !Sub 'ianmckay-${AWS::Region}'
+                S3Key: !If
+                    - S3Defined
+                    - !Ref S3Key
+                    - 'accountcontroller/process_email_lambda.zip'
+            Handler: index.handler
+            Role: !GetAtt 'LambdaExecutionRole.Arn'
+            Environment:
+                Variables:
+                    DEBUG_BUCKET: !Ref DebugBucket
+                    CAPTCHA_KEY: !Ref 2CaptchaApiKey
+            Runtime: nodejs8.10
+            MemorySize: 1024
+            Timeout: 900
+    
+    LambdaExecutionRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                  - Effect: Allow
+                    Principal:
+                        Service:
+                          - lambda.amazonaws.com
+                    Action:
+                      - sts:AssumeRole
+            Path: /
+            Policies:
+              - PolicyName: root
+                PolicyDocument:
+                    Version: '2012-10-17'
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - logs:CreateLogGroup
+                          - logs:CreateLogStream
+                          - logs:PutLogEvents
+                        Resource: arn:aws:logs:*:*:*
+                      - Effect: Allow
+                        Action:
+                          - s3:* # TODO: Lock down
+                        Resource:
+                          - !Sub arn:aws:s3:::accountcontroller-email-processing-${AWS::Region}-${AWS::AccountId}
+                          - !Sub arn:aws:s3:::accountcontroller-email-processing-${AWS::Region}-${AWS::AccountId}/*
+                      - Effect: Allow
+                        Action:
+                          - s3:* # TODO: Lock down
+                        Resource:
+                          - !Sub arn:aws:s3:::${DebugBucket}
+                          - !Sub arn:aws:s3:::${DebugBucket}/*
+
+    EmailBucket:
+        DependsOn:
+          - BucketPermission
+        Type: AWS::S3::Bucket
+        Properties:
+            BucketName: !Sub "accountcontroller-email-processing-${AWS::Region}-${AWS::AccountId}" # Required, see https://aws.amazon.com/premiumsupport/knowledge-center/unable-validate-destination-s3/
+            LifecycleConfiguration:
+                Rules:
+                  - NoncurrentVersionExpirationInDays: 1
+                    ExpirationInDays: 1
+                    Status: Enabled
+            NotificationConfiguration:
+                LambdaConfigurations:
+                  - Event: "s3:ObjectCreated:*"
+                    Function: !GetAtt LambdaFunction.Arn
+    
+    BucketPermission:
+        Type: AWS::Lambda::Permission
+        Properties:
+            Action: 'lambda:InvokeFunction'
+            FunctionName: !Ref LambdaFunction
+            Principal: s3.amazonaws.com
+            SourceAccount: !Ref "AWS::AccountId"
+            SourceArn: !Sub "arn:aws:s3:::accountcontroller-email-processing-${AWS::Region}-${AWS::AccountId}"
+
+    ReceiptRuleSet:
+        Type: AWS::SES::ReceiptRuleSet
+        Properties:
+            RuleSetName: account-controller
+
+    ReceiptRule:
+        DependsOn:
+          - ReceivedEmailBucketPolicy
+        Type: AWS::SES::ReceiptRule
+        Properties:
+            RuleSetName: !Ref ReceiptRuleSet
+            Rule:
+                Name: default
+                Enabled: true
+                Actions:
+                  - S3Action:
+                        BucketName: !Ref EmailBucket
+    
+    ReceivedEmailBucketPolicy:
+        Type: AWS::S3::BucketPolicy
+        Properties:
+            Bucket: !Ref EmailBucket
+            PolicyDocument:
+                Statement:
+                  - Effect: Allow
+                    Principal:
+                        Service: lambda.amazonaws.com
+                    Action:
+                      - s3:GetObject
+                    Resource:
+                      - !Sub "${EmailBucket.Arn}/*"
+                    Condition:
+                        StringEquals:
+                            "aws:Referer":
+                              - !Ref "AWS::AccountId"
+                  - Effect: Allow
+                    Principal:
+                        Service: ses.amazonaws.com
+                    Action:
+                      - s3:PutObject
+                    Resource:
+                      - !Sub "${EmailBucket.Arn}/*"
+                    Condition:
+                        StringEquals:
+                            "aws:Referer":
+                              - !Ref "AWS::AccountId"
+
+    LambdaServiceRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                  - Effect: Allow
+                    Principal:
+                        Service:
+                          - lambda.amazonaws.com
+                    Action:
+                      - sts:AssumeRole
+            Path: /
+            Policies:
+              - PolicyName: root
+                PolicyDocument:
+                    Version: '2012-10-17'
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - '*' # TODO: Review
+                        Resource: '*'
