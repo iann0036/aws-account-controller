@@ -113,7 +113,7 @@ Resources:
                     - !Ref S3Bucket
                     - Fn::FindInMap:
                         - RegionMap
-                        - Ref: AWS::Region
+                        - !Ref 'AWS::Region'
                         - bucketname
                 S3Key: !If
                     - S3Defined
