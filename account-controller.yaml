@@ -26,6 +26,41 @@ Conditions:
 
     S3Defined: !Not [ !Equals [ '', !Ref S3Bucket ] ]
 
+Mappings:
+    RegionMap:
+        us-east-1:
+            bucketname: ianmckay-us-east-1
+        us-east-2:
+            bucketname: ianmckay-us-east-2
+        us-west-1:
+            bucketname: ianmckay-us-west-1
+        us-west-2:
+            bucketname: ianmckay-us-west-2
+        ap-south-1:
+            bucketname: ianmckay-ap-south-1
+        ap-northeast-2:
+            bucketname: ianmckay-ap-northeast-2
+        ap-southeast-1:
+            bucketname: ianmckay-ap-southeast-1
+        ap-southeast-2:
+            bucketname: ianmckay-ap-southeast-2
+        ap-northeast-1:
+            bucketname: ianmckay-ap-northeast-1
+        ca-central-1:
+            bucketname: ianmckay-ca-central-1
+        eu-central-1:
+            bucketname: ianmckay-eu-central-1
+        eu-west-1:
+            bucketname: ianmckay-eu-west-1
+        eu-west-2:
+            bucketname: ianmckay-eu-west-2
+        eu-west-3:
+            bucketname: ianmckay-eu-west-3
+        eu-north-1:
+            bucketname: ianmckay-eu-north-1
+        sa-east-1:
+            bucketname: ianmckay-sa-east-1
+
 Resources:
 
     DebugBucket:
@@ -76,7 +111,10 @@ Resources:
                 S3Bucket: !If
                     - S3Defined
                     - !Ref S3Bucket
-                    - !Sub 'ianmckay-${AWS::Region}'
+                    - Fn::FindInMap:
+                        - RegionMap
+                        - Ref: AWS::Region
+                        - bucketname
                 S3Key: !If
                     - S3Defined
                     - !Ref S3Key
