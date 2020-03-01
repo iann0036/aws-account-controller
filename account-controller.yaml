@@ -22,6 +22,61 @@ Parameters:
         Type: String
         Default: ''
 
+    AutomationUsername:
+        Description: The username of an IAM user created to perform automated actions
+        Type: String
+        Default: AccountControllerAutomationUser
+    
+    CCName:
+        Description: The name of the credit card owner
+        Type: String
+    
+    CCNumber:
+        Description: The number of the credit card
+        Type: String
+    
+    CCMonth:
+        Description: The month of the credit card as a number (January = 1, December = 12)
+        Type: String
+        AllowedValues:
+          - "1"
+          - "2"
+          - "3"
+          - "4"
+          - "5"
+          - "6"
+          - "7"
+          - "8"
+          - "9"
+          - "10"
+          - "11"
+          - "12"
+    
+    CCYear:
+        Description: The full year of the credit card (e.g. 2020)
+        Type: String
+        AllowedValues:
+          - "2020"
+          - "2021"
+          - "2022"
+          - "2023"
+          - "2024"
+          - "2025"
+          - "2026"
+          - "2027"
+          - "2028"
+          - "2029"
+          - "2030"
+          - "2031"
+          - "2032"
+          - "2033"
+          - "2034"
+          - "2035"
+          - "2036"
+          - "2037"
+          - "2038"
+          - "2039"
+
 Conditions:
 
     S3Defined: !Not [ !Equals [ '', !Ref S3Bucket ] ]
@@ -79,34 +134,37 @@ Resources:
             Type: MX
             TTL: '900'
             ResourceRecords:
-              - !Sub 'inbound-smtp.${AWS::Region}.amazonaws.com'
+              - !Sub '10 inbound-smtp.${AWS::Region}.amazonaws.com'
     
-    ServiceCatalogTerminateProductRule:
-        Type: AWS::Events::Rule
-        Properties:
-            Description: Detect Service Catalog provisioned product terminations
-            EventPattern: |
-                {
-                    "source": [
-                        "aws.servicecatalog"
-                    ],
-                    "detail": {
-                        "eventName": [
-                            "TerminateProvisionedProduct"
-                        ],
-                        "eventSource": [
-                            "servicecatalog.amazonaws.com"
-                        ]
-                    }
-                }
-            State: ENABLED
-            Targets:
-              - Arn: !GetAtt LambdaFunction.Arn
-                Id: Action
+    # ServiceCatalogTerminateProductRule:
+    #     Type: AWS::Events::Rule
+    #     Properties:
+    #         Description: Detect Service Catalog provisioned product terminations
+    #         EventPattern: |
+    #             {
+    #                 "source": [
+    #                     "aws.servicecatalog"
+    #                 ],
+    #                 "detail": {
+    #                     "eventName": [
+    #                         "TerminateProvisionedProduct"
+    #                     ],
+    #                     "eventSource": [
+    #                         "servicecatalog.amazonaws.com"
+    #                     ]
+    #                 }
+    #             }
+    #         State: ENABLED
+    #         Targets:
+    #           - Arn: !GetAtt LambdaFunction.Arn
+    #             Id: Action
 
     LambdaFunction:
+        DependsOn:
+          - AutomationCredentials
         Type: AWS::Lambda::Function
         Properties:
+            FunctionName: AccountAutomator
             Code:
                 S3Bucket: !If
                     - S3Defined
@@ -125,7 +183,15 @@ Resources:
                 Variables:
                     DEBUG_BUCKET: !Ref DebugBucket
                     CAPTCHA_KEY: !Ref 2CaptchaApiKey
-            Runtime: nodejs8.10
+                    ACCOUNTID: !Ref AWS::AccountId
+                    MASTER_PWD: !Sub "{{resolve:secretsmanager:${AutomationCredentials}:SecretString:password}}"
+                    CONNECT_USERNAME: !Sub "{{resolve:secretsmanager:${AutomationCredentials}:SecretString:username}}"
+                    CONNECT_PASSWORD: !Sub "{{resolve:secretsmanager:${AutomationCredentials}:SecretString:password}}"
+                    CC_NAME: !Ref CCName
+                    CC_NUM: !Ref CCNumber
+                    CC_MONTH: !Ref CCMonth
+                    CC_YEAR: !Ref CCYear
+            Runtime: nodejs12.x
             MemorySize: 1024
             Timeout: 900
     
@@ -191,6 +257,7 @@ Resources:
             SourceAccount: !Ref "AWS::AccountId"
             SourceArn: !Sub "arn:aws:s3:::accountcontroller-email-processing-${AWS::Region}-${AWS::AccountId}"
 
+    # TODO: set as primary
     ReceiptRuleSet:
         Type: AWS::SES::ReceiptRuleSet
         Properties:
@@ -260,3 +327,33 @@ Resources:
                         Action:
                           - '*' # TODO: Review
                         Resource: '*'
+
+    ConnectUser:
+        DependsOn:
+          - AutomationCredentials
+        Type: AWS::IAM::User
+        Properties:
+            UserName: !Sub "{{resolve:secretsmanager:${AutomationCredentials}:SecretString:username}}"
+            LoginProfile:
+                Password: !Sub "{{resolve:secretsmanager:${AutomationCredentials}:SecretString:password}}"
+            Policies:
+              - PolicyName: ConnectAutomation
+                PolicyDocument:
+                    Version: '2012-10-17'
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - '*' # TODO: Review
+                        Resource: '*'
+    
+    AutomationCredentials:
+        Type: AWS::SecretsManager::Secret
+        Properties:
+            Name: account-controller-automation-secret
+            Description: Contains secret data for account automation
+            GenerateSecretString:
+                SecretStringTemplate: !Sub '{"username": "${AutomationUsername}"}'
+                GenerateStringKey: "password"
+                PasswordLength: 30
+                ExcludeCharacters: '"@/\'
+    
