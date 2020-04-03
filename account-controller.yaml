@@ -4,13 +4,18 @@ Description: Custom resource provider for the account controller
 
 Parameters:
 
+    MasterEmail:
+        Description: The email address which will receive all root account correspondence
+        Type: String
+
     DomainName:
-        Description: The dedicated domain or subdomain
+        Description: The domain name which is used for all account root email addresses
         Type: String
 
     2CaptchaApiKey:
         Description: The API Key for 2captcha.com
         Type: String
+        NoEcho: true
 
     S3Bucket:
         Description: The name of the bucket that contains the Lambda source (leave blank to use latest)
@@ -27,13 +32,24 @@ Parameters:
         Type: String
         Default: AccountControllerAutomationUser
     
+    LogLevel:
+        Description: The log level of the Lambda function
+        Type: String
+        Default: "WARN"
+        AllowedValues:
+          - "DEBUG"
+          - "INFO"
+          - "WARN"
+          - "ERROR"
+    
     CCName:
-        Description: The name of the credit card owner
+        Description: The full name of the credit card owner
         Type: String
     
     CCNumber:
         Description: The number of the credit card
         Type: String
+        NoEcho: true
     
     CCMonth:
         Description: The month of the credit card as a number (January = 1, December = 12)
@@ -76,10 +92,68 @@ Parameters:
           - "2037"
           - "2038"
           - "2039"
+    
+    HostedZoneId:
+        Description: The ID of the hosted zone of the previous domain name (leave blank for this to be created for you)
+        Type: String
+        Default: ''
+
+Metadata: 
+
+    AWS::CloudFormation::Interface: 
+        ParameterGroups: 
+          - Label: 
+                default: "Email Configuration"
+            Parameters: 
+              - MasterEmail
+              - DomainName
+              - HostedZoneId
+          - Label: 
+                default: "Billing Credit Card"
+            Parameters: 
+              - CCName
+              - CCNumber
+              - CCMonth
+              - CCYear
+          - Label: 
+                default: "Other Settings"
+            Parameters: 
+              - 2CaptchaApiKey
+              - AutomationUsername
+          - Label: 
+                default: "Lambda Function"
+            Parameters: 
+              - LogLevel
+              - S3Bucket
+              - S3Key
+        ParameterLabels: 
+            MasterEmail: 
+                default: "Master Email Address"
+            DomainName: 
+                default: "Master Domain Name"
+            HostedZoneId: 
+                default: "Hosted Zone ID"
+            CCName: 
+                default: "Credit Card Name"
+            CCNumber: 
+                default: "Credit Card Number"
+            CCMonth: 
+                default: "Credit Card Expiry Month"
+            CCYear: 
+                default: "Credit Card Expiry Year"
+            2CaptchaApiKey: 
+                default: "2Captcha API Key"
+            S3Bucket: 
+                default: "S3 Bucket"
+            S3Key: 
+                default: "S3 Key"
+            LogLevel: 
+                default: "Log Level"
 
 Conditions:
 
     S3Defined: !Not [ !Equals [ '', !Ref S3Bucket ] ]
+    HostedZoneNotDefined: !Equals [ '', !Ref HostedZoneId ]
 
 Mappings:
     RegionMap:
@@ -120,8 +194,24 @@ Resources:
 
     DebugBucket:
         Type: AWS::S3::Bucket
+        Properties:
+            LifecycleConfiguration:
+                Rules:
+                  - NoncurrentVersionExpirationInDays: 14
+                    ExpirationInDays: 14
+                    Status: Enabled
+            BucketEncryption:
+                ServerSideEncryptionConfiguration:
+                  - ServerSideEncryptionByDefault:
+                        SSEAlgorithm: AES256
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: true
+                BlockPublicPolicy: true
+                IgnorePublicAcls: true
+                RestrictPublicBuckets: true
 
-    HostedZone: 
+    HostedZone:
+        Condition: HostedZoneNotDefined
         Type: AWS::Route53::HostedZone
         Properties:
             Name: !Ref DomainName
@@ -129,39 +219,62 @@ Resources:
     MXRecord:
         Type: AWS::Route53::RecordSet
         Properties:
-            HostedZoneId: !Ref HostedZone
+            HostedZoneId: !If
+              - HostedZoneNotDefined
+              - !Ref HostedZone
+              - !Ref HostedZoneId
             Name: !Sub '${DomainName}.'
             Type: MX
             TTL: '900'
             ResourceRecords:
               - !Sub '10 inbound-smtp.${AWS::Region}.amazonaws.com'
     
-    # ServiceCatalogTerminateProductRule:
-    #     Type: AWS::Events::Rule
-    #     Properties:
-    #         Description: Detect Service Catalog provisioned product terminations
-    #         EventPattern: |
-    #             {
-    #                 "source": [
-    #                     "aws.servicecatalog"
-    #                 ],
-    #                 "detail": {
-    #                     "eventName": [
-    #                         "TerminateProvisionedProduct"
-    #                     ],
-    #                     "eventSource": [
-    #                         "servicecatalog.amazonaws.com"
-    #                     ]
-    #                 }
-    #             }
-    #         State: ENABLED
-    #         Targets:
-    #           - Arn: !GetAtt LambdaFunction.Arn
-    #             Id: Action
+    OrgAccountTaggedForDeletionRule:
+        Type: AWS::Events::Rule
+        Properties:
+            Description: Detect and begin processing accounts tagged for deletion
+            EventPattern: |
+              {
+                "source": [
+                  "aws.organizations"
+                ],
+                "detail-type": [
+                  "AWS API Call via CloudTrail"
+                ],
+                "detail": {
+                  "eventSource": [
+                    "organizations.amazonaws.com"
+                  ],
+                  "eventName": [
+                    "TagResource"
+                  ]
+                }
+              }
+            State: ENABLED
+            Targets:
+              - Arn: !GetAtt LambdaFunction.Arn
+                Id: Action
+
+    LambdaEventRulePermission:
+        Type: AWS::Lambda::Permission
+        Properties:
+            FunctionName: !Ref LambdaFunction
+            Action: lambda:InvokeFunction
+            Principal: events.amazonaws.com
+            SourceArn: !GetAtt OrgAccountTaggedForDeletionRule.Arn
+
+    LambdaConnectPermission:
+        Type: AWS::Lambda::Permission
+        Properties:
+            FunctionName: !Ref LambdaFunction
+            Action: lambda:InvokeFunction
+            Principal: connect.amazonaws.com
+            SourceAccount: !Ref AWS::AccountId
 
     LambdaFunction:
         DependsOn:
           - AutomationCredentials
+          - ConnectUser
         Type: AWS::Lambda::Function
         Properties:
             FunctionName: AccountAutomator
@@ -178,7 +291,7 @@ Resources:
                     - !Ref S3Key
                     - 'accountcontroller/process_email_lambda.zip'
             Handler: index.handler
-            Role: !GetAtt 'LambdaExecutionRole.Arn'
+            Role: !GetAtt LambdaExecutionRole.Arn
             Environment:
                 Variables:
                     DEBUG_BUCKET: !Ref DebugBucket
@@ -191,6 +304,8 @@ Resources:
                     CC_NUM: !Ref CCNumber
                     CC_MONTH: !Ref CCMonth
                     CC_YEAR: !Ref CCYear
+                    MASTER_EMAIL: !Ref MasterEmail
+                    LOG_LEVEL: !Ref LogLevel
             Runtime: nodejs12.x
             MemorySize: 1024
             Timeout: 900
@@ -231,6 +346,31 @@ Resources:
                         Resource:
                           - !Sub arn:aws:s3:::${DebugBucket}
                           - !Sub arn:aws:s3:::${DebugBucket}/*
+                      - Effect: Allow
+                        Action:
+                          - lambda:GetFunctionConfiguration
+                          - lambda:UpdateFunctionConfiguration
+                        Resource:
+                          - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:AccountAutomator
+                      - Effect: Allow
+                        Action:
+                          - organizations:DescribeAccount
+                        Resource:
+                          - !Sub arn:aws:organizations::${AWS::AccountId}:account/*
+                      - Effect: Allow
+                        Action:
+                          - organizations:ListAccounts
+                          - organizations:ListTagsForResource
+                        Resource:
+                          - '*'
+                      - Effect: Allow
+                        Action:
+                          - ses:SendRawEmail
+                        Resource:
+                          - '*'
+                        Condition:
+                            StringEquals:
+                                ses:FromAddress: !Ref MasterEmail
 
     EmailBucket:
         DependsOn:
@@ -240,22 +380,31 @@ Resources:
             BucketName: !Sub "accountcontroller-email-processing-${AWS::Region}-${AWS::AccountId}" # Required, see https://aws.amazon.com/premiumsupport/knowledge-center/unable-validate-destination-s3/
             LifecycleConfiguration:
                 Rules:
-                  - NoncurrentVersionExpirationInDays: 1
-                    ExpirationInDays: 1
+                  - NoncurrentVersionExpirationInDays: 14
+                    ExpirationInDays: 14
                     Status: Enabled
             NotificationConfiguration:
                 LambdaConfigurations:
                   - Event: "s3:ObjectCreated:*"
                     Function: !GetAtt LambdaFunction.Arn
+            BucketEncryption:
+                ServerSideEncryptionConfiguration:
+                  - ServerSideEncryptionByDefault:
+                        SSEAlgorithm: AES256
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: true
+                BlockPublicPolicy: true
+                IgnorePublicAcls: true
+                RestrictPublicBuckets: true
     
     BucketPermission:
         Type: AWS::Lambda::Permission
         Properties:
-            Action: 'lambda:InvokeFunction'
+            Action: lambda:InvokeFunction
             FunctionName: !Ref LambdaFunction
             Principal: s3.amazonaws.com
-            SourceAccount: !Ref "AWS::AccountId"
-            SourceArn: !Sub "arn:aws:s3:::accountcontroller-email-processing-${AWS::Region}-${AWS::AccountId}"
+            SourceAccount: !Ref AWS::AccountId
+            SourceArn: !Sub arn:aws:s3:::accountcontroller-email-processing-${AWS::Region}-${AWS::AccountId}
 
     # TODO: set as primary
     ReceiptRuleSet:
@@ -305,29 +454,6 @@ Resources:
                             "aws:Referer":
                               - !Ref "AWS::AccountId"
 
-    LambdaServiceRole:
-        Type: AWS::IAM::Role
-        Properties:
-            AssumeRolePolicyDocument:
-                Version: '2012-10-17'
-                Statement:
-                  - Effect: Allow
-                    Principal:
-                        Service:
-                          - lambda.amazonaws.com
-                    Action:
-                      - sts:AssumeRole
-            Path: /
-            Policies:
-              - PolicyName: root
-                PolicyDocument:
-                    Version: '2012-10-17'
-                    Statement:
-                      - Effect: Allow
-                        Action:
-                          - '*' # TODO: Review
-                        Resource: '*'
-
     ConnectUser:
         DependsOn:
           - AutomationCredentials
@@ -357,3 +483,7 @@ Resources:
                 PasswordLength: 30
                 ExcludeCharacters: '"@/\'
     
+    ConnectSetup: 
+        Type: Custom::ConnectSetup
+        Properties: 
+            ServiceToken: !GetAtt LambdaFunction.Arn
