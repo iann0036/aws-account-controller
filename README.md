@@ -31,7 +31,7 @@ Click the above link to deploy the stack to your environment. This stack creates
 * An SES Receipt Rule Set, which is automatically promoted to be default
 * An IAM user with a login profile, used to deploy a Connect instance
 
-If you prefer, you can also manually upsert the [template.yml](https://github.com/iann0036/accountcontroller/blob/master/template.yml) stack from source.
+If you prefer, you can also manually upsert the [template.yml](https://github.com/iann0036/aws-account-controller/blob/master/template.yml) stack from source.
 
 If you chose to have the stack create a hosted zone for the account root e-mails instead of you bringing your own, you should ensure the nameservers of the new zone are associated with an accessible domains (automatic if the domain was created within Route 53).
 
@@ -55,3 +55,5 @@ Once tagged, a process will perform the following actions on your behalf:
 * Remove the account from Organizations
 
 The above process typically takes approximately 3 minutes.
+
+Note that an account is required to have existed for 7 days or more to be successfully removed from Organizations.
