@@ -70,19 +70,21 @@ const sendcfnresponse = async (event, context, responseStatus, responseData, phy
         }
     };
  
-    var request = https.request(options, function(response) {
-        console.log("Status code: " + response.statusCode);
-        console.log("Status message: " + response.statusMessage);
-        context.done();
+    await new Promise((resolve, reject) => {
+        var request = https.request(options, function(response) {
+            console.log("Status code: " + response.statusCode);
+            console.log("Status message: " + response.statusMessage);
+            resolve();
+        });
+     
+        request.on("error", function(error) {
+            console.log("send(..) failed executing https.request(..): " + error);
+            reject();
+        });
+     
+        request.write(responseBody);
+        request.end();
     });
- 
-    request.on("error", function(error) {
-        console.log("send(..) failed executing https.request(..): " + error);
-        context.done();
-    });
- 
-    request.write(responseBody);
-    request.end();
 }
 
 const solveCaptchaRekog = async (page, url) => {
@@ -206,8 +208,13 @@ async function login(page) {
     });
     */
 
-    await page.goto('https://' + process.env.ACCOUNTID + '.signin.aws.amazon.com/console');
+    await page.goto('https://' + process.env.ACCOUNTID + '.signin.aws.amazon.com/console', {
+        timeout: 0,
+        waitUntil: ['domcontentloaded']
+    });
     await debugScreenshot(page);
+
+    await page.waitFor(2000);
 
     let username = await page.$('#username');
     await username.press('Backspace');
@@ -226,7 +233,10 @@ async function login(page) {
 }
 
 async function createinstance(page, properties) {
-    await page.goto('https://' + process.env.AWS_REGION + '.console.aws.amazon.com/connect/onboarding');
+    await page.goto('https://' + process.env.AWS_REGION + '.console.aws.amazon.com/connect/onboarding', {
+        timeout: 0,
+        waitUntil: ['domcontentloaded']
+    });
     await page.waitFor(5000);
 
     let directory = await page.$('input[ng-model="ad.directoryAlias"]');
@@ -267,7 +277,7 @@ async function createinstance(page, properties) {
     let finish = await page.$('button[type="submit"].awsui-button-variant-primary');
     finish.click();
 
-    await page.waitForSelector('div.launch-page-login-link', {timeout: 180000});
+    await page.waitForSelector('.onboarding-success-message', {timeout: 180000});
 
     await debugScreenshot(page);
 
@@ -275,7 +285,10 @@ async function createinstance(page, properties) {
 }
 
 async function open(page, properties) {
-    await page.goto('https://' + process.env.AWS_REGION + '.console.aws.amazon.com/connect/home');
+    await page.goto('https://' + process.env.AWS_REGION + '.console.aws.amazon.com/connect/home', {
+        timeout: 0,
+        waitUntil: ['domcontentloaded']
+    });
     await page.waitFor(8000);
 
     await debugScreenshot(page);
@@ -292,7 +305,10 @@ async function open(page, properties) {
         return obj.getAttribute('href');
     }, loginbutton);
 
-    await page.goto('https://' + process.env.AWS_REGION + '.console.aws.amazon.com' + loginlink);
+    await page.goto('https://' + process.env.AWS_REGION + '.console.aws.amazon.com' + loginlink, {
+        timeout: 0,
+        waitUntil: ['domcontentloaded']
+    });
 
     await page.waitFor(8000);
 
@@ -300,7 +316,10 @@ async function open(page, properties) {
 }
 
 async function deleteinstance(page, properties) {
-    await page.goto('https://' + process.env.AWS_REGION + '.console.aws.amazon.com/connect/home');
+    await page.goto('https://' + process.env.AWS_REGION + '.console.aws.amazon.com/connect/home', {
+        timeout: 0,
+        waitUntil: ['domcontentloaded']
+    });
     await page.waitFor(8000);
 
     await debugScreenshot(page);
@@ -320,7 +339,7 @@ async function deleteinstance(page, properties) {
     console.log("Clicked remove");
     await page.waitFor(200);
 
-    let directory = await page.$('#awsui-textfield-1');
+    let directory = await page.$('.awsui-textfield-type-text');
     await directory.press('Backspace');
     await directory.type(properties.Domain, { delay: 100 });
     await page.waitFor(200);
@@ -337,7 +356,10 @@ async function claimnumber(page, properties) {
 
     console.log(host + '/connect/numbers/claim');
 
-    await page.goto(host + '/connect/numbers/claim');
+    await page.goto(host + '/connect/numbers/claim', {
+        timeout: 0,
+        waitUntil: ['domcontentloaded']
+    });
     await page.waitFor(5000);
 
     await debugScreenshot(page);
@@ -426,7 +448,10 @@ async function uploadprompts(page, properties) {
         let filename = prompt_filenames[pid];
 
         do {
-            await page.goto(host + "/connect/prompts/create");
+            await page.goto(host + "/connect/prompts/create", {
+                timeout: 0,
+                waitUntil: ['domcontentloaded']
+            });
             await page.waitFor(5000);
             console.log("Checking for correct load");
             console.log(host + "/connect/prompts/create");
@@ -454,6 +479,7 @@ async function uploadprompts(page, properties) {
 
         await debugScreenshot(page);
         
+        await page.$('#collapsePrompt0 > div > div:nth-child(2) > table > tbody > tr > td');
         let promptid = await page.$eval('#collapsePrompt0 > div > div:nth-child(2) > table > tbody > tr > td', el => el.textContent);
         console.log("PROMPT ID:");
         console.log(promptid);
@@ -469,7 +495,10 @@ async function createflow(page, properties, prompts) {
     let host = 'https://' + new url.URL(await page.url()).host;
     
     do {
-        await page.goto(host + "/connect/contact-flows/create?type=contactFlow");
+        await page.goto(host + "/connect/contact-flows/create?type=contactFlow", {
+            timeout: 0,
+            waitUntil: ['domcontentloaded']
+        });
         await page.waitFor(5000);
         console.log("Checking for correct load");
         console.log(host + "/connect/contact-flows/create?type=contactFlow");
@@ -758,10 +787,11 @@ async function handleEmailInbound(page, event) {
             Key: record.s3.object.key
         }).promise().then(async (data) => {
             let body = data.Body.toString().replace(/=3D/g, '=').replace(/=\r\n/g, '');
-            email = body.substring(body.indexOf("To: ") + 4, body.indexOf("\n", body.indexOf("To: ")));
+            email = body.substring(body.indexOf("To: ") + 4, body.indexOf("\n", body.indexOf("To: "))).trim();
             console.log("EMAIL IS:");
             console.log(email);
 
+            /*
             let parsed = await mailparser.simpleParser(source, {
                 skipHtmlToText: true,
                 skipImageLinks: true,
@@ -770,10 +800,15 @@ async function handleEmailInbound(page, event) {
             });
 
             console.log(parsed);
+            */
 
+            console.log("Master Email:");
+            console.log(MASTER_EMAIL);
+
+            /*
             await new Promise(async (resolve, reject) => {
                 ses.sendRawEmail({
-                    Source: MASTER_EMAIL,
+                    Source: email,
                     Destinations: [MASTER_EMAIL],
                     RawMessage: {
                         Data: data.Body.toString()
@@ -785,6 +820,7 @@ async function handleEmailInbound(page, event) {
                     resolve();
                 });
             });
+            */
 
             await new Promise(async (resolve, reject) => {
                 organizations.listAccounts({
@@ -796,16 +832,15 @@ async function handleEmailInbound(page, event) {
 
                     accounts = data.Accounts;
                     while (data.NextToken) {
-                        await new Promise(async (resolve, reject) => {
+                        await new Promise(async (xresolve, reject) => {
                             organizations.listAccounts({
                                 x: data.NextToken
                             }, async function (err, xdata) {
                                 accounts = accounts.concat(xdata.Accounts);
                                 data = xdata;
-                                resolve();
+                                xresolve();
                             });
                         });
-                        resolve();
                     }
     
                     accounts.forEach(accountitem => {
@@ -820,11 +855,11 @@ async function handleEmailInbound(page, event) {
 
             isdeletable = false;
             await new Promise(async (resolve, reject) => {
-                organizations.listTagsForResource({
+                organizations.listTagsForResource({ // TODO: paginate
                     ResourceId: account.Id
                 }, async function (err, data) {
                     data.Tags.forEach(tag => {
-                        if (tag.key.toLowerCase() == "delete" && tag.value.toLowerCase() == "true") {
+                        if (tag.Key.toLowerCase() == "delete" && tag.Value.toLowerCase() == "true") {
                             isdeletable = true;
                         }
                     });
@@ -838,7 +873,10 @@ async function handleEmailInbound(page, event) {
                 let url = body.substring(start, end);
                 console.log(url);
                 
-                await page.goto(url);
+                await page.goto(url, {
+                    timeout: 0,
+                    waitUntil: ['domcontentloaded']
+                });
                 await page.waitFor(5000);
 
                 await debugScreenshot(page);
@@ -860,7 +898,10 @@ async function handleEmailInbound(page, event) {
                 if (isdeletable) {
                     console.log("Begun delete account");
 
-                    await page.goto('https://console.aws.amazon.com/console/home');
+                    await page.goto('https://console.aws.amazon.com/console/home', {
+                        timeout: 0,
+                        waitUntil: ['domcontentloaded']
+                    });
                     await page.waitForSelector('#resolving_input', {timeout: 15000});
                     await page.waitFor(500);
 
@@ -915,7 +956,10 @@ async function handleEmailInbound(page, event) {
                     
                     await debugScreenshot(page);
 
-                    await page.goto('https://portal.aws.amazon.com/billing/signup?client=organizations&enforcePI=True');
+                    await page.goto('https://portal.aws.amazon.com/billing/signup?client=organizations&enforcePI=True', {
+                        timeout: 0,
+                        waitUntil: ['domcontentloaded']
+                    });
                     await page.waitFor(8000);
                     
                     await debugScreenshot(page);
@@ -1043,7 +1087,10 @@ async function handleEmailInbound(page, event) {
                     if (page.mainFrame().url().split("#").pop() == "/support") {
                         await removeAccountFromOrg(email);
 
-                        await page.goto('https://console.aws.amazon.com/billing/home?#/account');
+                        await page.goto('https://console.aws.amazon.com/billing/home?#/account', {
+                            timeout: 0,
+                            waitUntil: ['domcontentloaded']
+                        });
 
                         await page.waitFor(8000);
 
@@ -1091,7 +1138,10 @@ async function removeAccountFromOrg(email) {
 }
 
 async function setBilling(page, event) {
-    await page.goto('https://console.aws.amazon.com/console/home');
+    await page.goto('https://console.aws.amazon.com/console/home', {
+        timeout: 0,
+        waitUntil: ['domcontentloaded']
+    });
     await page.waitForSelector('#resolving_input', {timeout: 15000});
     await page.waitFor(500);
 
@@ -1117,7 +1167,10 @@ async function setBilling(page, event) {
 
     await page.waitFor(8000);
 
-    await page.goto('https://console.aws.amazon.com/billing/home?#/paymentmethods');
+    await page.goto('https://console.aws.amazon.com/billing/home?#/paymentmethods', {
+        timeout: 0,
+        waitUntil: ['domcontentloaded']
+    });
     await page.waitForSelector('.payment-icon-button-button', {timeout: 15000});
     await page.waitFor(2000);
 
@@ -1137,7 +1190,10 @@ async function setBilling(page, event) {
 }
 
 async function triggerReset(page, event) {
-    await page.goto('https://console.aws.amazon.com/console/home');
+    await page.goto('https://console.aws.amazon.com/console/home', {
+        timeout: 0,
+        waitUntil: ['domcontentloaded']
+    });
     await page.waitForSelector('#resolving_input', {timeout: 15000});
     await page.waitFor(500);
 
@@ -1301,76 +1357,95 @@ exports.handler = async (event, context) => {
         });
 
         let page = await browser.newPage();
-        
-        await login(page);
 
-        if (event.RequestType == "Create") {
-            await createinstance(page, {
-                'Domain': domain
-            });
-            await page.waitFor(5000);
-            await open(page, {
-                'Domain': domain
-            });
-            let hostx = new url.URL(await page.url()).host;
-            while (hostx.indexOf('awsapps') == -1) {
-                await page.waitFor(20000);
+        try {
+            await login(page);
+
+            if (event.RequestType == "Create") {
+                await ses.setActiveReceiptRuleSet({
+                    RuleSetName: "account-controller"
+                }).promise();
+
+                await createinstance(page, {
+                    'Domain': domain
+                });
+                await page.waitFor(5000);
                 await open(page, {
                     'Domain': domain
                 });
-                hostx = new url.URL(await page.url()).host;
-            }
-            let prompts = await uploadprompts(page, {
-                'Domain': domain
-            });
-            await createflow(page, {
-                'Domain': domain
-            }, prompts);
-            let number = await claimnumber(page, {
-                'Domain': domain
-            });
-            console.log(number);
-
-            await new Promise((resolve, reject) => {
-                lambda.getFunctionConfiguration({
-                    FunctionName: "AccountAutomator"
-                }, function (err, data) {
-                    if (err) {
-                        console.log(err, err.stack);
-                        reject();
-                    } else {
-                        let variables = data['Environment']['Variables'];
-        
-                        ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(num => {
-                            variables['PROMPT_' + num] = prompts[num + '.wav'];
-                        });
-                        variables['PHONE_NUMBER'] = number['PhoneNumber'].replace(/[ -]/g, "")
-        
-                        lambda.updateFunctionConfiguration({
-                            FunctionName: "AccountAutomator",
-                            Environment: {
-                                Variables: variables
-                            }
-                        }, function (err, data) {
-                            if (err) {
-                                console.log(err, err.stack);
-                                reject();
-                            }
-                            resolve();
-                        });
-                    }
+                let hostx = new url.URL(await page.url()).host;
+                while (hostx.indexOf('awsapps') == -1) {
+                    await page.waitFor(20000);
+                    await open(page, {
+                        'Domain': domain
+                    });
+                    hostx = new url.URL(await page.url()).host;
+                }
+                let prompts = await uploadprompts(page, {
+                    'Domain': domain
                 });
-            });
-        } else if (event.RequestType == "Delete") {
-            // TO BE TESTED
-            await deleteinstance(page, {
+                await createflow(page, {
+                    'Domain': domain
+                }, prompts);
+                let number = await claimnumber(page, {
+                    'Domain': domain
+                });
+                console.log(number);
+
+                await new Promise((resolve, reject) => {
+                    lambda.getFunctionConfiguration({
+                        FunctionName: "AccountAutomator"
+                    }, function (err, data) {
+                        if (err) {
+                            console.log(err, err.stack);
+                            reject();
+                        } else {
+                            let variables = data['Environment']['Variables'];
+            
+                            ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(num => {
+                                variables['PROMPT_' + num] = prompts[num + '.wav'];
+                            });
+                            variables['PHONE_NUMBER'] = number['PhoneNumber'].replace(/[ -]/g, "")
+            
+                            lambda.updateFunctionConfiguration({
+                                FunctionName: "AccountAutomator",
+                                Environment: {
+                                    Variables: variables
+                                }
+                            }, function (err, data) {
+                                if (err) {
+                                    console.log(err, err.stack);
+                                    reject();
+                                }
+                                resolve();
+                            });
+                        }
+                    });
+                });
+            } else if (event.RequestType == "Delete") {
+                await ses.setActiveReceiptRuleSet({
+                    RuleSetName: "default-rule-set"
+                }).promise();
+
+                await ses.deleteReceiptRuleSet({
+                    RuleSetName: "account-controller"
+                }).promise();
+
+                await deleteinstance(page, {
+                    'Domain': domain
+                });
+            }
+
+            await sendcfnresponse(event, context, "SUCCESS", {
                 'Domain': domain
             });
-        }
+        } catch(error) {
+            await debugScreenshot(page);
 
-        sendcfnresponse(event, context, "SUCCESS", {
-            'Domain': domain
-        });
+            await sendcfnresponse(event, context, "FAILED", {});
+
+            throw error;
+        }
     } else {
         return context.succeed();
     }

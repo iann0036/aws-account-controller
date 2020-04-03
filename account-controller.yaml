@@ -271,10 +271,17 @@ Resources:
             Principal: connect.amazonaws.com
             SourceAccount: !Ref AWS::AccountId
 
+    LambdaLogGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: /aws/lambda/AccountAutomator
+            RetentionInDays: 14
+
     LambdaFunction:
         DependsOn:
           - AutomationCredentials
           - ConnectUser
+          - LambdaLogGroup
         Type: AWS::Lambda::Function
         Properties:
             FunctionName: AccountAutomator
@@ -371,6 +378,12 @@ Resources:
                         Condition:
                             StringEquals:
                                 ses:FromAddress: !Ref MasterEmail
+                      - Effect: Allow
+                        Action:
+                          - ses:SetActiveReceiptRuleSet
+                          - ses:DeleteReceiptRuleSet
+                        Resource:
+                          - '*'
 
     EmailBucket:
         DependsOn:
@@ -405,9 +418,9 @@ Resources:
             Principal: s3.amazonaws.com
             SourceAccount: !Ref AWS::AccountId
             SourceArn: !Sub arn:aws:s3:::accountcontroller-email-processing-${AWS::Region}-${AWS::AccountId}
-
-    # TODO: set as primary
+    
     ReceiptRuleSet:
+        DeletionPolicy: Retain # Custom Resource is responsible for deletion
         Type: AWS::SES::ReceiptRuleSet
         Properties:
             RuleSetName: account-controller
@@ -484,6 +497,9 @@ Resources:
                 ExcludeCharacters: '"@/\'
     
     ConnectSetup: 
+        DependsOn:
+          - LambdaLogGroup
+          - ReceiptRuleSet
         Type: Custom::ConnectSetup
         Properties: 
             ServiceToken: !GetAtt LambdaFunction.Arn
