@@ -41,8 +41,9 @@ Currently, the only tested region is `us-east-1`. The stack deploy time is appro
 
 In order to elect to delete an account, simply tag an account within the Organizations console with the following:
 
-*Tag Key:* delete
-*Tag Value:* true 
+*Tag Key:* **delete**
+
+*Tag Value:* **true**
 
 Once tagged, a process will perform the following actions on your behalf:
 
