@@ -9,3 +9,5 @@ Manage the creation and deletion of sandbox-style accounts.
 ...
 
 Template deploy time: Approx. 7 minutes.
+
+Account destroy time: Approx. 3 minutes.
