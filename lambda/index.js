@@ -950,6 +950,8 @@ async function handleEmailInbound(page, event) {
                     await input4.press('Backspace');
                     await input4.type(MASTER_PWD, { delay: 100 });
 
+                    await debugScreenshot(page);
+
                     let submitd = await page.$('#signin_button');
                     await submitd.click();
                     await page.waitFor(8000);
@@ -966,7 +968,7 @@ async function handleEmailInbound(page, event) {
                     console.log("Screenshotted at portal");
                     console.log(page.mainFrame().url());
                     // /confirmation is an activation period
-                    if (page.mainFrame().url().split("#").pop() != "/identityverification" && page.mainFrame().url().split("#").pop() != "/support") {
+                    if (page.mainFrame().url().split("#").pop() == "/paymentinformation") {
 
                         let input5 = await page.$('#credit-card-number');
                         await input5.press('Backspace');
@@ -1074,7 +1076,6 @@ async function handleEmailInbound(page, event) {
                         
                         await debugScreenshot(page);
 
-                        $('#verification-complete-button')
                         let verificationcompletebutton = await page.$('#verification-complete-button');
                         await verificationcompletebutton.click();
 
@@ -1085,8 +1086,6 @@ async function handleEmailInbound(page, event) {
                     }
 
                     if (page.mainFrame().url().split("#").pop() == "/support") {
-                        await removeAccountFromOrg(email);
-
                         await page.goto('https://console.aws.amazon.com/billing/home?#/account', {
                             timeout: 0,
                             waitUntil: ['domcontentloaded']
@@ -1118,6 +1117,8 @@ async function handleEmailInbound(page, event) {
                         await page.waitFor(5000);
 
                         await debugScreenshot(page);
+
+                        await removeAccountFromOrg(account.Id);
                     } else {
                         console.log("Unsure of location, send help! - " + page.mainFrame().url());
                     }
@@ -1133,8 +1134,12 @@ async function handleEmailInbound(page, event) {
     return true;
 };
 
-async function removeAccountFromOrg(email) {
-    console.log("Removed account from Org");
+async function removeAccountFromOrg(id) {
+    await organizations.removeAccountFromOrganization({
+        AccountId: id
+    }, function(err, data) {
+        console.log("Removed account from Org");
+    });
 }
 
 async function setBilling(page, event) {
