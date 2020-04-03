@@ -1,0 +1,29 @@
+{
+  "name": "aws-account-controller",
+  "version": "0.1.0",
+  "description": "Manage the creation and deletion of sandbox-style accounts",
+  "main": "index.js",
+  "dependencies": {
+    "aws-sdk": "^2.652.0",
+    "chrome-aws-lambda": "^2.1.1",
+    "https": "^1.0.0",
+    "mailparser": "^2.7.7",
+    "puppeteer-core": "^2.1.1",
+    "request": "^2.88.0",
+    "request-promise": "^4.2.4"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iann0036/aws-account-controller.git"
+  },
+  "author": "Ian Mckay",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/iann0036/aws-account-controller/issues"
+  },
+  "homepage": "https://github.com/iann0036/aws-account-controller#readme"
+}
