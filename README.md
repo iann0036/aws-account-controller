@@ -37,6 +37,10 @@ If you chose to have the stack create a hosted zone for the account root e-mails
 
 Currently, the only tested region is `us-east-1`. The stack deploy time is approximately 7 minutes.
 
+#### Uninstallation
+
+To remove this solution, ensure that both S3 buckets have their objects removed then delete the CloudFormation stack. The SES Receipt Rule Set will revert back to `default-rule-set`.
+
 ## Usage
 
 In order to elect to delete an account, simply tag an account within the Organizations console with the following:
@@ -54,6 +58,6 @@ Once tagged, a process will perform the following actions on your behalf:
 * Close the account
 * Remove the account from Organizations
 
-The above process typically takes approximately 3 minutes.
+The above process takes approximately 3 minutes.
 
 Note that an account is required to have existed for 7 days or more to be successfully removed from Organizations.
