@@ -891,7 +891,7 @@ async function handleEmailInbound(page, event) {
                 
                 ses.sendRawEmail({
                     Source: MASTER_EMAIL,
-                    Destinations: [MASTER_EMAIL],
+                    Destinations: [msg.to],
                     RawMessage: {
                         Data: stringified
                     }
