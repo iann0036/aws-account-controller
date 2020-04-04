@@ -898,6 +898,8 @@ async function handleEmailInbound(page, event) {
                 }, function (err, data) {
                     if (err) {
                         LOG.debug(err);
+
+                        msg.to = "AWS Accounts Master <" + MASTER_EMAIL + ">";
                         
                         ses.sendRawEmail({
                             Source: MASTER_EMAIL,
