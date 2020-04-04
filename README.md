@@ -49,7 +49,7 @@ In order for you to easily build upon this system, the system makes heavy use of
 
 E-mails that are targetting the addresses of the root account will be forwarded by default to the master e-mail address.
 
-You can specify a different location per account by placing a tag with the key `AccountEmailForwardingAddress` on the account in Organizations.
+You can specify a different destination per account by placing a tag with the key `AccountEmailForwardingAddress` on the account in Organizations.
 
 You can also override the format of the subject line for forwarded e-mails. During installation, you can change the subject line to any string with the following variables available for substitution:
 
