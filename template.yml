@@ -12,7 +12,7 @@ Parameters:
     EmailSubjectCustomization:
         Description: The format of the forwarded emails
         Type: String
-        Default: "{subject} | From: {from} | Account ID: {accountid} | Account Email: {accountemail}"
+        Default: "{subject} | From: {from} | Acct ID: {accountid} | Acct Email: {accountemail}"
 
     DomainName:
         Description: The domain name which is used for all account root email addresses
@@ -21,6 +21,7 @@ Parameters:
     2CaptchaApiKey:
         Description: The API Key for 2captcha.com
         Type: String
+        Default: ''
         NoEcho: true
 
     S3Bucket:
@@ -311,16 +312,10 @@ Resources:
                     DEBUG_BUCKET: !Ref DebugBucket
                     CAPTCHA_KEY: !Ref 2CaptchaApiKey
                     ACCOUNTID: !Ref AWS::AccountId
-                    MASTER_PWD: !Sub "{{resolve:secretsmanager:${AutomationCredentials}:SecretString:password}}"
-                    CONNECT_USERNAME: !Sub "{{resolve:secretsmanager:${AutomationCredentials}:SecretString:username}}"
-                    CONNECT_PASSWORD: !Sub "{{resolve:secretsmanager:${AutomationCredentials}:SecretString:password}}"
-                    CC_NAME: !Ref CCName
-                    CC_NUM: !Ref CCNumber
-                    CC_MONTH: !Ref CCMonth
-                    CC_YEAR: !Ref CCYear
                     MASTER_EMAIL: !Ref MasterEmail
                     LOG_LEVEL: !Ref LogLevel
                     EMAIL_SUBJECT: !Ref EmailSubjectCustomization
+                    SECRET_ARN: !Ref AutomationCredentials
             Runtime: nodejs12.x
             MemorySize: 1024
             Timeout: 900
@@ -397,6 +392,11 @@ Resources:
                           - events:DeleteRule
                         Resource:
                           - '*'
+                      - Effect: Allow
+                        Action:
+                          - secretsmanager:GetSecretValue
+                        Resource:
+                          - !Ref AutomationCredentials
 
     EmailBucket:
         DependsOn:
@@ -504,7 +504,14 @@ Resources:
             Name: account-controller-automation-secret
             Description: Contains secret data for account automation
             GenerateSecretString:
-                SecretStringTemplate: !Sub '{"username": "${AutomationUsername}"}'
+                SecretStringTemplate: !Sub |
+                    {
+                        "username": "${AutomationUsername}",
+                        "ccmonth": "${CCMonth}",
+                        "ccyear": "${CCYear}",
+                        "ccname": "${CCName}",
+                        "ccnumber": "${CCNumber}"
+                    }
                 GenerateStringKey: "password"
                 PasswordLength: 30
                 ExcludeCharacters: '"@/\'

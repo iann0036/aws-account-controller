@@ -38,14 +38,10 @@ var rekognition = new AWS.Rekognition();
 var organizations = new AWS.Organizations();
 var ses = new AWS.SES();
 var eventbridge = new AWS.EventBridge();
+var secretsmanager = new AWS.SecretsManager();
 
 const CAPTCHA_KEY = process.env.CAPTCHA_KEY;
-const MASTER_PWD = process.env.MASTER_PWD;
 const MASTER_EMAIL = process.env.MASTER_EMAIL;
-const CC_NUM = process.env.CC_NUM;
-const CC_NAME = process.env.CC_NAME;
-const CC_MONTH = process.env.CC_MONTH;
-const CC_YEAR = process.env.CC_YEAR;
 const ACCOUNTID = process.env.ACCOUNTID;
 
 const sendcfnresponse = async (event, context, responseStatus, responseData, physicalResourceId, noEcho) => {
@@ -197,25 +193,19 @@ const debugScreenshot = async (page) => {
 };
 
 async function login(page) {
-    //var secretsmanager = new AWS.SecretsManager();
-    var passwordstr = "";
-    passwordstr = process.env.CONNECT_PASSWORD;
+    let secretdata = {};
+    await secretsmanager.getSecretValue({
+        SecretId: process.env.SECRET_ARN
+    }, function (err, data) {
+        if (err) {
+            LOG.error(err, err.stack);
+            reject();
+        }
 
-    /*
-    await new Promise(function (resolve, reject) {
-        secretsmanager.getSecretValue({
-            SecretId: process.env.CONNECT_PASSWORD_SECRET
-        }, function (err, data) {
-            if (err) {
-                LOG.info(err, err.stack);
-                reject();
-            }
+        secretdata = JSON.parse(data.SecretString);
+    }).promise();
 
-            passwordstr = JSON.parse(data.SecretString).password;
-            resolve();
-        });
-    });
-    */
+    var passwordstr = secretdata.password;
 
     await page.goto('https://' + process.env.ACCOUNTID + '.signin.aws.amazon.com/console', {
         timeout: 0,
@@ -227,7 +217,7 @@ async function login(page) {
 
     let username = await page.$('#username');
     await username.press('Backspace');
-    await username.type(process.env.CONNECT_USERNAME, { delay: 100 });
+    await username.type(secretdata.username, { delay: 100 });
 
     let password = await page.$('#password');
     await password.press('Backspace');
@@ -815,7 +805,7 @@ async function handleEmailInbound(page, event) {
                         // no params
                     }, async function (err, data) {
                         if (err) {
-                            LOG.warn(err);
+                            LOG.error(err);
                         }
     
                         accounts = data.Accounts;
@@ -919,13 +909,32 @@ async function handleEmailInbound(page, event) {
             });
 
             if (!account) {
+                LOG.debug("No account found, aborting");
                 return;
             }
 
-            let start = body.indexOf("https://signin.aws.amazon.com/resetpassword");
+            LOG.debug(body);
+
+            let filteredbody = body.replace(/=3D/g, '=').replace(/=\r\n/g, '');
+
+            let start = filteredbody.indexOf("https://signin.aws.amazon.com/resetpassword");
             if (start !== -1) {
-                let end = body.indexOf("<", start);
-                let url = body.substring(start, end);
+                LOG.debug("Started processing password reset");
+
+                let secretdata = {};
+                await secretsmanager.getSecretValue({
+                    SecretId: process.env.SECRET_ARN
+                }, function (err, data) {
+                    if (err) {
+                        LOG.error(err, err.stack);
+                        reject();
+                    }
+        
+                    secretdata = JSON.parse(data.SecretString);
+                }).promise();
+
+                let end = filteredbody.indexOf("<", start);
+                let url = filteredbody.substring(start, end);
 
                 let parsedurl = new URL(url);
                 if (parsedurl.host != "signin.aws.amazon.com") {
@@ -944,11 +953,11 @@ async function handleEmailInbound(page, event) {
 
                 let newpwinput = await page.$('#new_password');
                 await newpwinput.press('Backspace');
-                await newpwinput.type(MASTER_PWD, { delay: 100 });
+                await newpwinput.type(secretdata.password, { delay: 100 });
 
                 let input2 = await page.$('#confirm_password');
                 await input2.press('Backspace');
-                await input2.type(MASTER_PWD, { delay: 100 });
+                await input2.type(secretdata.password, { delay: 100 });
 
                 let submit = await page.$('#reset_password_submit');
                 await submit.click();
@@ -1002,14 +1011,14 @@ async function handleEmailInbound(page, event) {
                         await submitc.click();
                         await page.waitFor(5000);
                     } catch (error) {
-                        LOG.warn(error);
+                        LOG.error(error);
                     }
 
                     await debugScreenshot(page);
                     
                     let input4 = await page.$('#password');
                     await input4.press('Backspace');
-                    await input4.type(MASTER_PWD, { delay: 100 });
+                    await input4.type(secretdata.password, { delay: 100 });
 
                     await debugScreenshot(page);
 
@@ -1033,20 +1042,20 @@ async function handleEmailInbound(page, event) {
 
                         let input5 = await page.$('#credit-card-number');
                         await input5.press('Backspace');
-                        await input5.type(CC_NUM, { delay: 100 });
+                        await input5.type(secretdata.ccnumber, { delay: 100 });
 
-                        await page.select('#expirationMonth', (parseInt(CC_MONTH)-1).toString());
+                        await page.select('#expirationMonth', (parseInt(secretdata.ccmonth)-1).toString());
 
                         await page.waitFor(2000);
                         await debugScreenshot(page);
 
                         let currentyear = new Date().getFullYear();
 
-                        await page.select('select[name=\'expirationYear\']', (parseInt(CC_YEAR)-currentyear).toString());
+                        await page.select('select[name=\'expirationYear\']', (parseInt(secretdata.ccyear)-currentyear).toString());
 
                         let input6 = await page.$('#accountHolderName');
                         await input6.press('Backspace');
-                        await input6.type(CC_NAME, { delay: 100 });
+                        await input6.type(secretdata.ccname, { delay: 100 });
 
                         await page.waitFor(2000);
                         await debugScreenshot(page);
@@ -1096,7 +1105,7 @@ async function handleEmailInbound(page, event) {
                                 
                                 captchanotdone = false;
                             } catch (error) {
-                                LOG.warn(error);
+                                LOG.error(error);
                             }
                         }
 
@@ -1110,7 +1119,7 @@ async function handleEmailInbound(page, event) {
                                 FunctionName: "AccountAutomator"
                             }, function (err, data) {
                                 if (err) {
-                                    LOG.warn(err, err.stack);
+                                    LOG.error(err, err.stack);
                                     reject();
                                 } else {
                                     let variables = data['Environment']['Variables'];
@@ -1124,7 +1133,7 @@ async function handleEmailInbound(page, event) {
                                         }
                                     }, function (err, data) {
                                         if (err) {
-                                            LOG.warn(err, err.stack);
+                                            LOG.error(err, err.stack);
                                             reject();
                                         }
                                         resolve();
@@ -1211,8 +1220,7 @@ async function handleEmailInbound(page, event) {
                 }
                 
             } else {
-                //account
-                //body
+                LOG.debug("No password reset found");
             }
         });
     }
@@ -1270,58 +1278,6 @@ async function removeAccountFromOrg(account) {
     return false;
 }
 
-async function setBilling(page, event) {
-    await page.goto('https://console.aws.amazon.com/console/home', {
-        timeout: 0,
-        waitUntil: ['domcontentloaded']
-    });
-    await page.waitForSelector('#resolving_input', {timeout: 15000});
-    await page.waitFor(500);
-
-    let resinput = await page.$('#resolving_input');
-    await resinput.press('Backspace');
-    await resinput.type(event.email, { delay: 100 });
-
-    let nextbutton = await page.$('#next_button');
-    await nextbutton.click();
-
-    await debugScreenshot(page);
-
-    await page.waitFor(8000);
-
-    let password = await page.$('#password');
-    await password.press('Backspace');
-    await password.type(MASTER_PWD, { delay: 100 });
-
-    let signin_button = await page.$('#signin_button');
-    signin_button.click();
-
-    await debugScreenshot(page);
-
-    await page.waitFor(8000);
-
-    await page.goto('https://console.aws.amazon.com/billing/home?#/paymentmethods', {
-        timeout: 0,
-        waitUntil: ['domcontentloaded']
-    });
-    await page.waitForSelector('.payment-icon-button-button', {timeout: 15000});
-    await page.waitFor(2000);
-
-    let addacardbutton = await page.$('.payment-icon-button-button');
-    await addacardbutton.click();
-    await page.waitFor(500);
-
-    let ccnumfield = await page.$('input[name="addCreditCardNumber"]');
-    await ccnumfield.press('Backspace');
-    await ccnumfield.type(CC_NUM, { delay: 100 });
-
-    let ccnamefield = await page.$('input[name="accountHolderName"]');
-    await ccnamefield.press('Backspace');
-    await ccnamefield.type(CC_NAME, { delay: 100 });
-    
-    //.expiration-month > select
-}
-
 async function triggerReset(page, event) {
     await page.goto('https://console.aws.amazon.com/console/home', {
         timeout: 0,
@@ -1374,7 +1330,7 @@ async function triggerReset(page, event) {
             
             captchanotdone = false;
         } catch (error) {
-            LOG.warn(error);
+            LOG.error(error);
         }
     }
 
@@ -1430,7 +1386,7 @@ exports.handler = async (event, context) => {
                     AccountId: event.detail.requestParameters.resourceId
                 }, async function (err, data) {
                     if (err) {
-                        LOG.warn(err);
+                        LOG.error(err);
                     }
 
                     browser = await puppeteer.launch({
@@ -1538,7 +1494,7 @@ exports.handler = async (event, context) => {
                         FunctionName: "AccountAutomator"
                     }, function (err, data) {
                         if (err) {
-                            LOG.warn(err, err.stack);
+                            LOG.error(err, err.stack);
                             reject();
                         } else {
                             let variables = data['Environment']['Variables'];
@@ -1555,7 +1511,7 @@ exports.handler = async (event, context) => {
                                 }
                             }, function (err, data) {
                                 if (err) {
-                                    LOG.warn(err, err.stack);
+                                    LOG.error(err, err.stack);
                                     reject();
                                 }
                                 resolve();
