@@ -41,7 +41,7 @@ Currently, the only tested region is `us-east-1`. The stack deploy time is appro
 
 #### Uninstallation
 
-To remove this solution, ensure that both S3 buckets have their objects removed then delete the CloudFormation stack. The SES Receipt Rule Set will revert back to `default-rule-set`.
+To remove this solution, ensure that both S3 buckets have their objects removed then delete the CloudFormation stack. The SES Receipt Rule Set will revert back to `default-rule-set`. An attempt will be made to terminate the Connect instance, however you should verify this occurs.
 
 ## Usage
 
