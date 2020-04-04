@@ -1069,6 +1069,13 @@ async function handleEmailInbound(page, event) {
                     await debugScreenshot(page);
 
                     if (page.mainFrame().url().split("#").pop() == "/identityverification") {
+                        let usoption = await page.$('option[label="United States (+1)"]');
+                        let usvalue = await page.evaluate( (obj) => {
+                            return obj.getAttribute('value');
+                        }, usoption);
+
+                        await page.select('#countryCode', usvalue);
+
                         let portalphonenumber = await page.$('#phoneNumber');
                         await portalphonenumber.press('Backspace');
                         await portalphonenumber.type(process.env.PHONE_NUMBER.replace("+1", ""), { delay: 100 });

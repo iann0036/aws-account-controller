@@ -157,6 +157,8 @@ Metadata:
                 default: "S3 Key"
             LogLevel: 
                 default: "Log Level"
+            EmailSubjectCustomization: 
+                default: "E-mail Subject Customization"
 
 Conditions:
 

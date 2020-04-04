@@ -37,7 +37,7 @@ If you chose to have the stack create a hosted zone for the account root e-mails
 
 You should also ensure that SES verifies the master e-mail address as it is used for sending and either verifies the destination domain or is released from sandbox mode. Also make sure SES sending service limits are appropriate for the amount of e-mails you intend to receive.
 
-Currently, the only tested region is `us-east-1`. The stack deploy time is approximately 7 minutes.
+Currently, the only tested region is `us-east-1`. The stack deploy time is approximately 8 minutes.
 
 #### Uninstallation
 
@@ -79,6 +79,6 @@ Once tagged, a process will perform the following actions on your behalf:
 * Close the account
 * Remove (or schedule removal of) the account from Organizations
 
-The above process takes approximately 3 minutes.
+The above process takes approximately 4 minutes.
 
 If the account more than 7 days old, the process completely remove the account from Organizations. If the account is less than 7 days old, a tag with the key `AccountDeletionTime` will be set with the timestamp the account was deleted at and another tag with the key `ScheduledRemovalTime` will be set with the timestamp the account will be removed from Organizations.
