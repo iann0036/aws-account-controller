@@ -43,6 +43,25 @@ To remove this solution, ensure that both S3 buckets have their objects removed 
 
 ## Usage
 
+In order for you to easily build upon this system, the system makes heavy use of tags for system automation and configuration.
+
+### E-mail Forwarding
+
+E-mails that are targetting the addresses of the root account will be forwarded by default to the master e-mail address.
+
+You can specify a different location per account by placing a tag with the key `AccountEmailForwardingAddress` on the account in Organizations.
+
+You can also override the format of the subject line for forwarded e-mails. During installation, you can change the subject line to any string with the following variables available for substitution:
+
+* {from} - The From address of the original e-mail
+* {to} - The To address of the original e-mail
+* {subject} - The subject of the original e-mail
+* {accountid} - The ID of the account
+* {accountname} - The name of the account
+* {accountemail} - The root email address of the account
+
+### Account Deletion
+
 In order to elect to delete an account, simply tag an account within the Organizations console with the following:
 
 *Tag Key:* **delete**
@@ -56,8 +75,8 @@ Once tagged, a process will perform the following actions on your behalf:
 * Add payment information to the account
 * Perform a phone verification of the account
 * Close the account
-* Remove the account from Organizations
+* Remove (or schedule removal of) the account from Organizations
 
 The above process takes approximately 3 minutes.
 
-If the account more than 7 days old, the process completely remove the account from Organizations. If the account is less than 7 days old, a tag with the key `accountDeletionTime` will be set with the timestamp the account was deleted at and another tag with the key `scheduledRemovalTime` will be set with the timestamp the account will be removed from Organizations.
+If the account more than 7 days old, the process completely remove the account from Organizations. If the account is less than 7 days old, a tag with the key `AccountDeletionTime` will be set with the timestamp the account was deleted at and another tag with the key `ScheduledRemovalTime` will be set with the timestamp the account will be removed from Organizations.

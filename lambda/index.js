@@ -1,5 +1,3 @@
-// npm i aws-sdk chrome-aws-lambda puppeteer-core request request-promise mailparser https winston
-
 /*
 
 CreateConnect Event:
@@ -23,9 +21,9 @@ const puppeteer = require('puppeteer-core');
 const AWS = require('aws-sdk');
 const fs = require('fs');
 const url = require('url');
-const mailparser = require('mailparser');
 var rp = require('request-promise');
 var winston = require('winston');
+var InternetMessage = require("internet-message");
 
 var LOG = winston.createLogger({
     level: process.env.LOG_LEVEL.toLowerCase(),
@@ -792,91 +790,135 @@ async function handleEmailInbound(page, event) {
     for (const record of event['Records']) {
         var account = null;
         var email = '';
+        var body = '';
+        var isdeletable = false;
         
         await s3.getObject({
             Bucket: record.s3.bucket.name,
             Key: record.s3.object.key
         }).promise().then(async (data) => {
-            let body = data.Body.toString().replace(/=3D/g, '=').replace(/=\r\n/g, '');
-            email = body.substring(body.indexOf("To: ") + 4, body.indexOf("\n", body.indexOf("To: "))).trim();
-            LOG.debug("EMAIL IS:");
-            LOG.debug(email);
-
-            /*
-            let parsed = await mailparser.simpleParser(source, {
-                skipHtmlToText: true,
-                skipImageLinks: true,
-                skipTextToHtml: true,
-                skipTextLinks: true
-            });
-
-            LOG.info(parsed);
-            */
-
-            LOG.debug("Master Email:");
-            LOG.debug(MASTER_EMAIL);
-
-            /*
             await new Promise(async (resolve, reject) => {
+                LOG.debug("Started processing e-mail");
+
+                var msg = InternetMessage.parse(data.Body.toString());
+
+                email = msg.to;
+                body = msg.body;
+
+                var emailmatches = /<(.*)>/g.exec(msg.to);
+                if (emailmatches && emailmatches.length > 1) {
+                    email = emailmatches[1];
+                }
+
+                await new Promise(async (resolve, reject) => {
+                    organizations.listAccounts({
+                        // no params
+                    }, async function (err, data) {
+                        if (err) {
+                            LOG.warn(err);
+                        }
+    
+                        accounts = data.Accounts;
+                        while (data.NextToken) {
+                            await new Promise(async (xresolve, reject) => {
+                                organizations.listAccounts({
+                                    x: data.NextToken
+                                }, async function (err, xdata) {
+                                    accounts = accounts.concat(xdata.Accounts);
+                                    data = xdata;
+                                    xresolve();
+                                });
+                            });
+                        }
+        
+                        accounts.forEach(accountitem => {
+                            if (accountitem.Email == email) {
+                                account = accountitem;
+                            }
+                        });
+    
+                        LOG.debug(account);
+        
+                        resolve();
+                    });
+                });
+
+                var accountemailforwardingaddress = null;
+
+                if (account) {
+                    await new Promise(async (resolve, reject) => {
+                        organizations.listTagsForResource({ // TODO: paginate
+                            ResourceId: account.Id
+                        }, async function (err, data) {
+                            data.Tags.forEach(tag => {
+                                if (tag.Key.toLowerCase() == "delete" && tag.Value.toLowerCase() == "true") {
+                                    isdeletable = true;
+                                }
+                                if (tag.Key.toLowerCase() == "accountemailforwardingaddress") {
+                                    accountemailforwardingaddress = tag.Value;
+                                }
+                            });
+                            resolve();
+                        });
+                    });
+                }
+                
+                var accountid = "?";
+                var accountemail = "?";
+                var accountname= "?";
+                if (account) {
+                    accountid = account.Id || "?";
+                    accountemail = account.Email || "?";
+                    accountname = account.Name || "?";
+                }
+                var msgsubject = msg.subject || "";
+                var from = msg.from || "";
+                var to = msg.to || "";
+
+                msg.subject = process.env.EMAIL_SUBJECT.
+                    replace("{subject}", msgsubject).
+                    replace("{from}", from).
+                    replace("{to}", to).
+                    replace("{accountid}", accountid).
+                    replace("{accountname}", accountname).
+                    replace("{accountemail}", accountemail);
+
+                msg.to = accountemailforwardingaddress || "AWS Accounts Master <" + MASTER_EMAIL + ">";
+                msg.from = "AWS Accounts Master <" + MASTER_EMAIL + ">";
+                msg['return-path'] = "AWS Accounts Master <" + MASTER_EMAIL + ">";
+
+                var stringified = InternetMessage.stringify(msg);
+                
                 ses.sendRawEmail({
-                    Source: email,
+                    Source: MASTER_EMAIL,
                     Destinations: [MASTER_EMAIL],
                     RawMessage: {
-                        Data: data.Body.toString()
-                        // TODO, change From:, To:, Subject:
+                        Data: stringified
                     }
-                }, async function (err, data) {
-                    LOG.info(err);
-                    LOG.info(data);
-                    resolve();
-                });
-            });
-            */
-
-            await new Promise(async (resolve, reject) => {
-                organizations.listAccounts({
-                    // no params
-                }, async function (err, data) {
+                }, function (err, data) {
                     if (err) {
-                        LOG.warn(err);
-                    }
+                        LOG.debug(err);
+                        
+                        ses.sendRawEmail({
+                            Source: MASTER_EMAIL,
+                            Destinations: [MASTER_EMAIL],
+                            RawMessage: {
+                                Data: "To: " + msg.to + "\r\nFrom: " + msg.from + "\r\nSubject: " + msg.subject + "\r\n\r\n***CONTENT NOT PROCESSABLE***\r\n\r\nDownload the email from s3://" + record.s3.bucket.name + "/" + record.s3.object.key + "\r\n"
+                            }
+                        }, function (err, data) {
+                            LOG.debug(err);
 
-                    accounts = data.Accounts;
-                    while (data.NextToken) {
-                        await new Promise(async (xresolve, reject) => {
-                            organizations.listAccounts({
-                                x: data.NextToken
-                            }, async function (err, xdata) {
-                                accounts = accounts.concat(xdata.Accounts);
-                                data = xdata;
-                                xresolve();
-                            });
+                            resolve();
                         });
+                    } else {
+                        resolve();
                     }
-    
-                    accounts.forEach(accountitem => {
-                        if (accountitem.Email == email) {
-                            account = accountitem;
-                        }
-                    });
-    
-                    resolve();
                 });
             });
 
-            isdeletable = false;
-            await new Promise(async (resolve, reject) => {
-                organizations.listTagsForResource({ // TODO: paginate
-                    ResourceId: account.Id
-                }, async function (err, data) {
-                    data.Tags.forEach(tag => {
-                        if (tag.Key.toLowerCase() == "delete" && tag.Value.toLowerCase() == "true") {
-                            isdeletable = true;
-                        }
-                    });
-                    resolve();
-                });
-            });
+            if (!account) {
+                return;
+            }
 
             let start = body.indexOf("https://signin.aws.amazon.com/resetpassword");
             if (start !== -1) {
@@ -1154,7 +1196,7 @@ async function handleEmailInbound(page, event) {
                             await organizations.tagResource({
                                 ResourceId: account.Id,
                                 Tags: [{
-                                    Key: "accountDeletionTime",
+                                    Key: "AccountDeletionTime",
                                     Value: (new Date()).toISOString()
                                 }]
                             }).promise();
@@ -1215,7 +1257,7 @@ async function removeAccountFromOrg(account) {
         await organizations.tagResource({
             ResourceId: account.Id,
             Tags: [{
-                Key: "scheduledRemovalTime",
+                Key: "ScheduledRemovalTime",
                 Value: threshold.toISOString()
             }]
         }).promise();

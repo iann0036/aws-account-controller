@@ -7,6 +7,12 @@ Parameters:
     MasterEmail:
         Description: The email address which will receive all root account correspondence
         Type: String
+        AllowedPattern: "^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]+$"
+
+    EmailSubjectCustomization:
+        Description: The format of the forwarded emails
+        Type: String
+        Default: "{subject} | From: {from} | Account ID: {accountid} | Account Email: {accountemail}"
 
     DomainName:
         Description: The domain name which is used for all account root email addresses
@@ -106,6 +112,7 @@ Metadata:
                 default: "Email Configuration"
             Parameters: 
               - MasterEmail
+              - EmailSubjectCustomization
               - DomainName
               - HostedZoneId
           - Label: 
@@ -313,6 +320,7 @@ Resources:
                     CC_YEAR: !Ref CCYear
                     MASTER_EMAIL: !Ref MasterEmail
                     LOG_LEVEL: !Ref LogLevel
+                    EMAIL_SUBJECT: !Ref EmailSubjectCustomization
             Runtime: nodejs12.x
             MemorySize: 1024
             Timeout: 900
@@ -376,9 +384,6 @@ Resources:
                           - ses:SendRawEmail
                         Resource:
                           - '*'
-                        Condition:
-                            StringEquals:
-                                ses:FromAddress: !Ref MasterEmail
                       - Effect: Allow
                         Action:
                           - ses:SetActiveReceiptRuleSet
