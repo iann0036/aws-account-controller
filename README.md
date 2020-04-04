@@ -60,4 +60,4 @@ Once tagged, a process will perform the following actions on your behalf:
 
 The above process takes approximately 3 minutes.
 
-Note that an account is required to have existed for 7 days or more to be successfully removed from Organizations.
+If the account more than 7 days old, the process completely remove the account from Organizations. If the account is less than 7 days old, a tag with the key `accountDeletionTime` will be set with the timestamp the account was deleted at and another tag with the key `scheduledRemovalTime` will be set with the timestamp the account will be removed from Organizations.
