@@ -1,4 +1,4 @@
-// npm i aws-sdk chrome-aws-lambda puppeteer-core request request-promise mailparser https
+// npm i aws-sdk chrome-aws-lambda puppeteer-core request request-promise mailparser https winston
 
 /*
 
@@ -25,12 +25,21 @@ const fs = require('fs');
 const url = require('url');
 const mailparser = require('mailparser');
 var rp = require('request-promise');
+var winston = require('winston');
+
+var LOG = winston.createLogger({
+    level: process.env.LOG_LEVEL.toLowerCase(),
+    transports: [
+        new winston.transports.Console()
+    ]
+});
 
 var s3 = new AWS.S3();
 var lambda = new AWS.Lambda();
 var rekognition = new AWS.Rekognition();
 var organizations = new AWS.Organizations();
 var ses = new AWS.SES();
+var eventbridge = new AWS.EventBridge();
 
 const CAPTCHA_KEY = process.env.CAPTCHA_KEY;
 const MASTER_PWD = process.env.MASTER_PWD;
@@ -53,7 +62,7 @@ const sendcfnresponse = async (event, context, responseStatus, responseData, phy
         Data: responseData
     });
  
-    console.log("Response body:\n", responseBody);
+    LOG.debug("Response body:\n", responseBody);
  
     var https = require("https");
     var url = require("url");
@@ -72,13 +81,13 @@ const sendcfnresponse = async (event, context, responseStatus, responseData, phy
  
     await new Promise((resolve, reject) => {
         var request = https.request(options, function(response) {
-            console.log("Status code: " + response.statusCode);
-            console.log("Status message: " + response.statusMessage);
+            LOG.debug("Status code: " + response.statusCode);
+            LOG.debug("Status message: " + response.statusMessage);
             resolve();
         });
      
         request.on("error", function(error) {
-            console.log("send(..) failed executing https.request(..): " + error);
+            LOG.warn("send(..) failed executing https.request(..): " + error);
             reject();
         });
      
@@ -100,8 +109,8 @@ const solveCaptchaRekog = async (page, url) => {
                 Bytes: Buffer.from(imgbody)
             }
         }, function(err, data) {
-            console.log(data);
-            console.log(err);
+            LOG.debug(data);
+            LOG.debug(err);
 
             if (data) {
                 data.TextDetections.forEach(textDetection => {
@@ -116,7 +125,7 @@ const solveCaptchaRekog = async (page, url) => {
         });
     });
 
-    console.log(code);
+    LOG.debug(code);
 
     if (!code) {
         let refreshbutton = await page.$('.refresh')
@@ -135,9 +144,9 @@ const solveCaptcha = async (page, url) => {
     var captcharef = await rp({ uri: 'http://2captcha.com/in.php', method: 'POST', body: JSON.stringify({
         'key': CAPTCHA_KEY,
         'method': 'base64',
-        'body': "data:image/jpeg;base64," + new Buffer(imgbody).toString('base64')
+        'body': "data:image/jpeg;base64," + Buffer.from(imgbody).toString('base64')
     })}).then(res => {
-        console.log(res);
+        LOG.debug(res);
         return res.split("|").pop();
     });;
 
@@ -147,7 +156,7 @@ const solveCaptcha = async (page, url) => {
         await new Promise(resolve => { setTimeout(resolve, 5000); });
 
         var captcharesult = await rp({ uri: 'http://2captcha.com/res.php?key=' + CAPTCHA_KEY + '&action=get&id=' + captcharef, method: 'GET' }).then(res => {
-            console.log(res);
+            LOG.debug(res);
             return res;
         });
 
@@ -162,29 +171,31 @@ const uploadResult = async (url, data) => {
 }
 
 const debugScreenshot = async (page) => {
-    let filename = Date.now().toString() + ".png";
+    if (LOG.level == "debug") {
+        let filename = Date.now().toString() + ".png";
 
-    await page.screenshot({ path: '/tmp/' + filename });
+        await page.screenshot({ path: '/tmp/' + filename });
 
-    await new Promise(function (resolve, reject) {
-        fs.readFile('/tmp/' + filename, (err, data) => {
-            if (err) console.error(err);
+        await new Promise(function (resolve, reject) {
+            fs.readFile('/tmp/' + filename, (err, data) => {
+                if (err) LOG.error(err);
 
-            var base64data = new Buffer(data, 'binary');
+                var base64data = Buffer.from(data);
 
-            var params = {
-                Bucket: process.env.DEBUG_BUCKET,
-                Key: filename,
-                Body: base64data
-            };
+                var params = {
+                    Bucket: process.env.DEBUG_BUCKET,
+                    Key: filename,
+                    Body: base64data
+                };
 
-            s3.upload(params, (err, data) => {
-                if (err) console.error(`Upload Error ${err}`);
-                console.log('Upload Completed');
-                resolve();
+                s3.upload(params, (err, data) => {
+                    if (err) LOG.error(`Upload Error ${err}`);
+                    LOG.debug('Upload Completed');
+                    resolve();
+                });
             });
         });
-    });
+    }
 };
 
 async function login(page) {
@@ -198,7 +209,7 @@ async function login(page) {
             SecretId: process.env.CONNECT_PASSWORD_SECRET
         }, function (err, data) {
             if (err) {
-                console.log(err, err.stack);
+                LOG.info(err, err.stack);
                 reject();
             }
 
@@ -331,12 +342,12 @@ async function deleteinstance(page, properties) {
     await page.waitFor(200);
 
     await debugScreenshot(page);
-    console.log("Clicked checkbox");
+    LOG.debug("Clicked checkbox");
 
     let removebutton = await page.$$('button[type="submit"]');
-    console.log(removebutton.length);
+    LOG.debug(removebutton.length);
     await removebutton[1].click();
-    console.log("Clicked remove");
+    LOG.debug("Clicked remove");
     await page.waitFor(200);
 
     let directory = await page.$('.awsui-textfield-type-text');
@@ -354,7 +365,7 @@ async function deleteinstance(page, properties) {
 async function claimnumber(page, properties) {
     let host = 'https://' + new url.URL(await page.url()).host;
 
-    console.log(host + '/connect/numbers/claim');
+    LOG.debug(host + '/connect/numbers/claim');
 
     await page.goto(host + '/connect/numbers/claim', {
         timeout: 0,
@@ -453,8 +464,8 @@ async function uploadprompts(page, properties) {
                 waitUntil: ['domcontentloaded']
             });
             await page.waitFor(5000);
-            console.log("Checking for correct load");
-            console.log(host + "/connect/prompts/create");
+            LOG.info("Checking for correct load");
+            LOG.debug(host + "/connect/prompts/create");
         } while (await page.$('#uploadFileBox') === null);
 
         await debugScreenshot(page);
@@ -481,8 +492,8 @@ async function uploadprompts(page, properties) {
         
         await page.$('#collapsePrompt0 > div > div:nth-child(2) > table > tbody > tr > td');
         let promptid = await page.$eval('#collapsePrompt0 > div > div:nth-child(2) > table > tbody > tr > td', el => el.textContent);
-        console.log("PROMPT ID:");
-        console.log(promptid);
+        LOG.debug("PROMPT ID:");
+        LOG.debug(promptid);
         ret[filename] = promptid;
     };
 
@@ -500,14 +511,14 @@ async function createflow(page, properties, prompts) {
             waitUntil: ['domcontentloaded']
         });
         await page.waitFor(5000);
-        console.log("Checking for correct load");
-        console.log(host + "/connect/contact-flows/create?type=contactFlow");
+        LOG.info("Checking for correct load");
+        LOG.debug(host + "/connect/contact-flows/create?type=contactFlow");
     } while (await page.$('#angularContainer') === null);
 
     await debugScreenshot(page);
 
     let dropdown = await page.$('#can-edit-contact-flow > div > awsui-button > button');
-    console.log(dropdown);
+    LOG.debug(dropdown);
     await dropdown.click();
 
     await page.waitFor(200);
@@ -515,7 +526,7 @@ async function createflow(page, properties, prompts) {
     await debugScreenshot(page);
 
     let importbutton = await page.$('li[ng-if="cfImportExport"]');
-    console.log(importbutton);
+    LOG.debug(importbutton);
     await importbutton.click();
 
     await page.waitFor(500);
@@ -746,13 +757,13 @@ async function createflow(page, properties, prompts) {
         mode: 0o777
     });*/
 
-    console.log(flow);
+    LOG.debug(flow);
 
     await page.waitFor(5000);
 
     page.click('#import-cf-file-button');
     let fileinput = await page.$('#import-cf-file');
-    console.log(fileinput);
+    LOG.debug(fileinput);
     await page.waitFor(1000);
     await debugScreenshot(page);
     //await fileinput.uploadFile('/tmp/flow.json'); // broken!
@@ -788,8 +799,8 @@ async function handleEmailInbound(page, event) {
         }).promise().then(async (data) => {
             let body = data.Body.toString().replace(/=3D/g, '=').replace(/=\r\n/g, '');
             email = body.substring(body.indexOf("To: ") + 4, body.indexOf("\n", body.indexOf("To: "))).trim();
-            console.log("EMAIL IS:");
-            console.log(email);
+            LOG.debug("EMAIL IS:");
+            LOG.debug(email);
 
             /*
             let parsed = await mailparser.simpleParser(source, {
@@ -799,11 +810,11 @@ async function handleEmailInbound(page, event) {
                 skipTextLinks: true
             });
 
-            console.log(parsed);
+            LOG.info(parsed);
             */
 
-            console.log("Master Email:");
-            console.log(MASTER_EMAIL);
+            LOG.debug("Master Email:");
+            LOG.debug(MASTER_EMAIL);
 
             /*
             await new Promise(async (resolve, reject) => {
@@ -815,8 +826,8 @@ async function handleEmailInbound(page, event) {
                         // TODO, change From:, To:, Subject:
                     }
                 }, async function (err, data) {
-                    console.log(err);
-                    console.log(data);
+                    LOG.info(err);
+                    LOG.info(data);
                     resolve();
                 });
             });
@@ -827,7 +838,7 @@ async function handleEmailInbound(page, event) {
                     // no params
                 }, async function (err, data) {
                     if (err) {
-                        console.log(err);
+                        LOG.warn(err);
                     }
 
                     accounts = data.Accounts;
@@ -871,7 +882,13 @@ async function handleEmailInbound(page, event) {
             if (start !== -1) {
                 let end = body.indexOf("<", start);
                 let url = body.substring(start, end);
-                console.log(url);
+
+                let parsedurl = new URL(url);
+                if (parsedurl.host != "signin.aws.amazon.com") {
+                    throw "Unexpected reset password host";
+                }
+
+                LOG.debug(url);
                 
                 await page.goto(url, {
                     timeout: 0,
@@ -893,10 +910,10 @@ async function handleEmailInbound(page, event) {
                 await submit.click();
                 await page.waitFor(5000);
 
-                console.log("Completed resetpassword link verification");
+                LOG.info("Completed resetpassword link verification");
 
                 if (isdeletable) {
-                    console.log("Begun delete account");
+                    LOG.info("Begun delete account");
 
                     await page.goto('https://console.aws.amazon.com/console/home', {
                         timeout: 0,
@@ -905,7 +922,7 @@ async function handleEmailInbound(page, event) {
                     await page.waitForSelector('#resolving_input', {timeout: 15000});
                     await page.waitFor(500);
 
-                    console.log("Entering email " + email);
+                    LOG.debug("Entering email " + email);
                     let resolvinginput = await page.$('#resolving_input');
                     await resolvinginput.press('Backspace');
                     await resolvinginput.type(email, { delay: 100 });
@@ -924,12 +941,12 @@ async function handleEmailInbound(page, event) {
                             return obj.getAttribute('src');
                         }, recaptchaimgx);
 
-                        console.log("CAPTCHA IMG URL:");
-                        console.log(recaptchaurlx);
+                        LOG.debug("CAPTCHA IMG URL:");
+                        LOG.debug(recaptchaurlx);
                         let result = await solveCaptcha(page, recaptchaurlx);
 
-                        console.log("CAPTCHA RESULT:");
-                        console.log(result);
+                        LOG.debug("CAPTCHA RESULT:");
+                        LOG.debug(result);
 
                         let input3 = await page.$('#captchaGuess');
                         await input3.press('Backspace');
@@ -941,7 +958,7 @@ async function handleEmailInbound(page, event) {
                         await submitc.click();
                         await page.waitFor(5000);
                     } catch (error) {
-                        console.log(error);
+                        LOG.warn(error);
                     }
 
                     await debugScreenshot(page);
@@ -965,8 +982,8 @@ async function handleEmailInbound(page, event) {
                     await page.waitFor(8000);
                     
                     await debugScreenshot(page);
-                    console.log("Screenshotted at portal");
-                    console.log(page.mainFrame().url());
+                    LOG.debug("Screenshotted at portal");
+                    LOG.debug(page.mainFrame().url());
                     // /confirmation is an activation period
                     if (page.mainFrame().url().split("#").pop() == "/paymentinformation") {
 
@@ -1014,12 +1031,12 @@ async function handleEmailInbound(page, event) {
                                     return obj.getAttribute('src');
                                 }, recaptchaimgx);
 
-                                console.log("CAPTCHA IMG URL:");
-                                console.log(recaptchaurlx);
+                                LOG.debug("CAPTCHA IMG URL:");
+                                LOG.debug(recaptchaurlx);
                                 let result = await solveCaptcha(page, recaptchaurlx);
 
-                                console.log("CAPTCHA RESULT:");
-                                console.log(result);
+                                LOG.debug("CAPTCHA RESULT:");
+                                LOG.debug(result);
 
                                 let input32 = await page.$('#guess');
                                 await input32.press('Backspace');
@@ -1035,7 +1052,7 @@ async function handleEmailInbound(page, event) {
                                 
                                 captchanotdone = false;
                             } catch (error) {
-                                console.log(error);
+                                LOG.warn(error);
                             }
                         }
 
@@ -1049,7 +1066,7 @@ async function handleEmailInbound(page, event) {
                                 FunctionName: "AccountAutomator"
                             }, function (err, data) {
                                 if (err) {
-                                    console.log(err, err.stack);
+                                    LOG.warn(err, err.stack);
                                     reject();
                                 } else {
                                     let variables = data['Environment']['Variables'];
@@ -1063,7 +1080,7 @@ async function handleEmailInbound(page, event) {
                                         }
                                     }, function (err, data) {
                                         if (err) {
-                                            console.log(err, err.stack);
+                                            LOG.warn(err, err.stack);
                                             reject();
                                         }
                                         resolve();
@@ -1085,42 +1102,67 @@ async function handleEmailInbound(page, event) {
 
                     }
 
-                    if (page.mainFrame().url().split("#").pop() == "/support") {
-                        await page.goto('https://console.aws.amazon.com/billing/home?#/account', {
+                    if (page.mainFrame().url().split("#").pop() == "/support" || page.mainFrame().url().split("#").pop() == "/confirmation") {
+                        await page.goto('https://console.aws.amazon.com/billing/rest/v1.0/account', {
                             timeout: 0,
                             waitUntil: ['domcontentloaded']
                         });
 
-                        await page.waitFor(8000);
+                        await page.waitFor(3000);
 
                         await debugScreenshot(page);
 
-                        let closeaccountcbs = await page.$$('.close-account-checkbox > input');
-                        await closeaccountcbs.forEach(async (cb) => {
-                            await cb.click();
-                        });
+                        let accountstatuspage = await page.content();
 
-                        await page.waitFor(1000);
+                        LOG.debug(accountstatuspage);
 
-                        await debugScreenshot(page);
+                        let issuspended = accountstatuspage.includes("\"accountStatus\":\"Suspended\"");
 
-                        let closeaccountbtn = await page.$('.btn-danger');
-                        await closeaccountbtn.click();
+                        if (!issuspended) {
+                            await page.goto('https://console.aws.amazon.com/billing/home?#/account', {
+                                timeout: 0,
+                                waitUntil: ['domcontentloaded']
+                            });
 
-                        await page.waitFor(1000);
+                            await page.waitFor(8000);
 
-                        await debugScreenshot(page);
+                            await debugScreenshot(page);
 
-                        let confirmcloseaccountbtn = await page.$('.modal-footer > button.btn-danger');
-                        await confirmcloseaccountbtn.click();
+                            let closeaccountcbs = await page.$$('.close-account-checkbox > input');
+                            await closeaccountcbs.forEach(async (cb) => {
+                                await cb.click();
+                            });
 
-                        await page.waitFor(5000);
+                            await page.waitFor(1000);
 
-                        await debugScreenshot(page);
+                            await debugScreenshot(page);
 
-                        await removeAccountFromOrg(account.Id);
+                            let closeaccountbtn = await page.$('.btn-danger');
+                            await closeaccountbtn.click();
+
+                            await page.waitFor(1000);
+
+                            await debugScreenshot(page);
+
+                            let confirmcloseaccountbtn = await page.$('.modal-footer > button.btn-danger');
+                            await confirmcloseaccountbtn.click();
+
+                            await page.waitFor(5000);
+
+                            await debugScreenshot(page);
+
+                            await organizations.tagResource({
+                                ResourceId: account.Id,
+                                Tags: [{
+                                    Key: "accountDeletionTime",
+                                    Value: (new Date()).toISOString()
+                                }]
+                            }).promise();
+                        }
+
+                        await removeAccountFromOrg(account);
                     } else {
-                        console.log("Unsure of location, send help! - " + page.mainFrame().url());
+                        LOG.warn("Unsure of location, send help! - " + page.mainFrame().url());
                     }
                 }
                 
@@ -1134,12 +1176,54 @@ async function handleEmailInbound(page, event) {
     return true;
 };
 
-async function removeAccountFromOrg(id) {
-    await organizations.removeAccountFromOrganization({
-        AccountId: id
-    }, function(err, data) {
-        console.log("Removed account from Org");
-    });
+async function removeAccountFromOrg(account) {
+    var now = new Date();
+    var threshold = new Date(account.JoinedTimestamp);
+    threshold.setDate(threshold.getDate() + 7); // 7 days
+    if (now > threshold) {
+        await organizations.removeAccountFromOrganization({
+            AccountId: account.Id
+        }, function(err, data) {
+            LOG.info("Removed account from Org");
+        });
+
+        return true;
+    } else {
+        threshold.setMinutes(threshold.getMinutes() + 2); // plus 2 minutes buffer
+        await eventbridge.putRule({
+            Name: "ScheduledAccountDeletion-" + account.Id.toString(),
+            Description: "The scheduled deletion of an Organizations account",
+            //RoleArn: '',
+            ScheduleExpression: "cron(" + threshold.getMinutes() + " " + threshold.getUTCHours() + " " + threshold.getUTCDate() + " " + (threshold.getUTCMonth() + 1) + " ? " + threshold.getUTCFullYear() + ")",
+            State: "ENABLED"
+        }).promise();
+
+        await eventbridge.putTargets({
+            Rule: "ScheduledAccountDeletion-" + account.Id.toString(),
+            Targets: [{
+                Arn: "arn:aws:lambda:" + process.env.AWS_REGION + ":" + process.env.ACCOUNTID  + ":function:" + process.env.AWS_LAMBDA_FUNCTION_NAME,
+                Id: "Lambda",
+                //RoleArn: "",
+                Input: JSON.stringify({
+                    "action": "removeAccountFromOrg",
+                    "account": account,
+                    "ruleName": "ScheduledAccountDeletion-" + account.Id.toString()
+                })
+            }]
+        }).promise();
+
+        await organizations.tagResource({
+            ResourceId: account.Id,
+            Tags: [{
+                Key: "scheduledRemovalTime",
+                Value: threshold.toISOString()
+            }]
+        }).promise();
+
+        LOG.info("Scheduled removal for later");
+    }
+
+    return false;
 }
 
 async function setBilling(page, event) {
@@ -1224,12 +1308,12 @@ async function triggerReset(page, event) {
                 return obj.getAttribute('src');
             }, recaptchaimgx);
 
-            console.log("CAPTCHA IMG URL:");
-            console.log(recaptchaurlx);
+            LOG.debug("CAPTCHA IMG URL:");
+            LOG.debug(recaptchaurlx);
             let result = await solveCaptcha(page, recaptchaurlx);
 
-            console.log("CAPTCHA RESULT:");
-            console.log(result);
+            LOG.debug("CAPTCHA RESULT:");
+            LOG.debug(result);
 
             let input3 = await page.$('#captchaGuess');
             await input3.press('Backspace');
@@ -1246,7 +1330,7 @@ async function triggerReset(page, event) {
             
             captchanotdone = false;
         } catch (error) {
-            console.log(error);
+            LOG.warn(error);
         }
     }
 
@@ -1262,7 +1346,7 @@ async function triggerReset(page, event) {
         return obj.getAttribute('src');
     }, recaptchaimg);
 
-    console.log(recaptchaurl);
+    LOG.debug(recaptchaurl);
     let captcharesult = await solveCaptcha(page, recaptchaurl);
 
     let input2 = await page.$('#password_recovery_captcha_guess');
@@ -1286,7 +1370,7 @@ exports.handler = async (event, context) => {
     let result = null;
     let browser = null;
 
-    console.log(event);
+    LOG.debug(event);
 
     if (event.source && event.source == "aws.organizations" && event.detail.eventName == "TagResource") {
         isdeletable = false;
@@ -1302,7 +1386,7 @@ exports.handler = async (event, context) => {
                     AccountId: event.detail.requestParameters.resourceId
                 }, async function (err, data) {
                     if (err) {
-                        console.log(err);
+                        LOG.warn(err);
                     }
 
                     browser = await puppeteer.launch({
@@ -1333,6 +1417,14 @@ exports.handler = async (event, context) => {
         let page = await browser.newPage();
 
         await triggerReset(page, event);
+    } else if (event.action == "removeAccountFromOrg") {
+        let removed = await removeAccountFromOrg(event.account);
+
+        if (removed) {
+            await eventbridge.deleteRule({
+                Name: event.ruleName
+            }).promise();
+        }
     } else if (event.Records) {
         browser = await puppeteer.launch({
             args: chromium.args,
@@ -1395,14 +1487,14 @@ exports.handler = async (event, context) => {
                 let number = await claimnumber(page, {
                     'Domain': domain
                 });
-                console.log(number);
+                LOG.info("Registered phone number: " + number);
 
                 await new Promise((resolve, reject) => {
                     lambda.getFunctionConfiguration({
                         FunctionName: "AccountAutomator"
                     }, function (err, data) {
                         if (err) {
-                            console.log(err, err.stack);
+                            LOG.warn(err, err.stack);
                             reject();
                         } else {
                             let variables = data['Environment']['Variables'];
@@ -1419,7 +1511,7 @@ exports.handler = async (event, context) => {
                                 }
                             }, function (err, data) {
                                 if (err) {
-                                    console.log(err, err.stack);
+                                    LOG.warn(err, err.stack);
                                     reject();
                                 }
                                 resolve();
