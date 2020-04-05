@@ -90,6 +90,18 @@ const sendcfnresponse = async (event, context, responseStatus, responseData, phy
     });
 }
 
+const solveCaptcha = async (page, url) => {
+    var captchaResult = "";
+
+    if (process.env.CAPTCHA_STRATEGY == "Rekognition") {
+        captchaResult = await solveCaptchaRekog(page, url);
+    } else {
+        captchaResult = await solveCaptcha2captcha(page, url);
+    }
+
+    return captchaResult;
+};
+
 const solveCaptchaRekog = async (page, url) => {
     var imgbody = await rp({ uri: url, method: 'GET', encoding: null }).then(res => {
         return res;
@@ -130,7 +142,7 @@ const solveCaptchaRekog = async (page, url) => {
     return code;
 }
 
-const solveCaptcha = async (page, url) => {
+const solveCaptcha2captcha = async (page, url) => {
     var imgbody = await rp({ uri: url, method: 'GET', encoding: null }).then(res => {
         return res;
     });
@@ -184,7 +196,7 @@ const debugScreenshot = async (page) => {
 
                 s3.upload(params, (err, data) => {
                     if (err) LOG.error(`Upload Error ${err}`);
-                    LOG.debug('Upload Completed');
+                    LOG.debug('Debug screenshot upload completed - ' + filename);
                     resolve();
                 });
             });
@@ -987,31 +999,65 @@ async function handleEmailInbound(page, event) {
 
                     await page.waitFor(5000);
 
-                    try {
-                        await debugScreenshot(page);
-                        let recaptchaimgx = await page.$('#captcha_image');
-                        let recaptchaurlx = await page.evaluate((obj) => {
-                            return obj.getAttribute('src');
-                        }, recaptchaimgx);
+                    let captchacontainer = await page.$('#captcha_container');
+                    let captchacontainerstyle = await page.evaluate((obj) => {
+                        return obj.getAttribute('style');
+                    }, captchacontainer);
 
-                        LOG.debug("CAPTCHA IMG URL:");
-                        LOG.debug(recaptchaurlx);
-                        let result = await solveCaptcha(page, recaptchaurlx);
+                    var captchanotdone = true;
+                    var captchaattempts = 0;
 
-                        LOG.debug("CAPTCHA RESULT:");
-                        LOG.debug(result);
+                    if (captchacontainerstyle.includes("display: none")) {
+                        LOG.debug("Skipping login CAPTCHA");
+                    } else {
+                        while (captchanotdone) {
+                            captchaattempts += 1;
+                            if (captchaattempts > 6) {
+                                LOG.error("Failed CAPTCHA too many times, aborting");
+                                return;
+                            }
+                            try {
+                                let submitc = await page.$('#submit_captcha');
 
-                        let input3 = await page.$('#captchaGuess');
-                        await input3.press('Backspace');
-                        await input3.type(result, { delay: 100 });
+                                await debugScreenshot(page);
+                                let recaptchaimgx = await page.$('#captcha_image');
+                                let recaptchaurlx = await page.evaluate((obj) => {
+                                    return obj.getAttribute('src');
+                                }, recaptchaimgx);
 
-                        await debugScreenshot(page);
-                        
-                        let submitc = await page.$('#submit_captcha');
-                        await submitc.click();
+                                LOG.debug("CAPTCHA IMG URL:");
+                                LOG.debug(recaptchaurlx);
+                                let result = await solveCaptcha(page, recaptchaurlx);
+
+                                LOG.debug("CAPTCHA RESULT:");
+                                LOG.debug(result);
+
+                                let input3 = await page.$('#captchaGuess');
+                                await input3.press('Backspace');
+                                await input3.type(result, { delay: 100 });
+
+                                await debugScreenshot(page);
+                                await submitc.click();
+                                await page.waitFor(5000);
+
+                                await debugScreenshot(page);
+
+                                captchacontainer = await page.$('#captcha_container');
+                                captchacontainerstyle = await page.evaluate((obj) => {
+                                    return obj.getAttribute('style');
+                                }, captchacontainer);
+
+                                if (captchacontainerstyle.includes("display: none")) {
+                                    LOG.debug("Successful CAPTCHA solve");
+
+                                    captchanotdone = false;
+                                }
+                            } catch (error) {
+                                LOG.error(error);
+                            }
+                        }
+
                         await page.waitFor(5000);
-                    } catch (error) {
-                        LOG.error(error);
                     }
 
                     await debugScreenshot(page);
@@ -1304,69 +1350,106 @@ async function triggerReset(page, event) {
 
     await page.waitFor(5000);
 
+    let captchacontainer = await page.$('#captcha_container');
+    let captchacontainerstyle = await page.evaluate((obj) => {
+        return obj.getAttribute('style');
+    }, captchacontainer);
+
     var captchanotdone = true;
-    while (captchanotdone) {
-        try {
-            let submitc = await page.$('#submit_captcha');
+    var captchaattempts = 0;
 
-            await debugScreenshot(page);
-            let recaptchaimgx = await page.$('#captcha_image');
-            let recaptchaurlx = await page.evaluate((obj) => {
-                return obj.getAttribute('src');
-            }, recaptchaimgx);
+    if (captchacontainerstyle.includes("display: none")) {
+        LOG.debug("Skipping login CAPTCHA");
+    } else {
+        while (captchanotdone) {
+            captchaattempts += 1;
+            if (captchaattempts > 6) {
+                LOG.error("Failed CAPTCHA too many times, aborting");
+                return;
+            }
+            try {
+                let submitc = await page.$('#submit_captcha');
 
-            LOG.debug("CAPTCHA IMG URL:");
-            LOG.debug(recaptchaurlx);
-            let result = await solveCaptcha(page, recaptchaurlx);
+                await debugScreenshot(page);
+                let recaptchaimgx = await page.$('#captcha_image');
+                let recaptchaurlx = await page.evaluate((obj) => {
+                    return obj.getAttribute('src');
+                }, recaptchaimgx);
 
-            LOG.debug("CAPTCHA RESULT:");
-            LOG.debug(result);
+                LOG.debug("CAPTCHA IMG URL:");
+                LOG.debug(recaptchaurlx);
+                let result = await solveCaptcha(page, recaptchaurlx);
 
-            let input3 = await page.$('#captchaGuess');
-            await input3.press('Backspace');
-            await input3.type(result, { delay: 100 });
+                LOG.debug("CAPTCHA RESULT:");
+                LOG.debug(result);
 
-            await debugScreenshot(page);
-            await submitc.click();
-            await page.waitFor(5000);
+                let input3 = await page.$('#captchaGuess');
+                await input3.press('Backspace');
+                await input3.type(result, { delay: 100 });
 
-            await debugScreenshot(page);
+                await debugScreenshot(page);
+                await submitc.click();
+                await page.waitFor(5000);
 
-            let forgotpwdlink = await page.$('#root_forgot_password_link');
-            await forgotpwdlink.click();
-            
-            captchanotdone = false;
-        } catch (error) {
-            LOG.error(error);
+                await debugScreenshot(page);
+
+                let forgotpwdlink = await page.$('#root_forgot_password_link');
+                await forgotpwdlink.click();
+
+                captchanotdone = false;
+            } catch (error) {
+                LOG.error(error);
+            }
         }
-    }
 
-    await page.waitFor(5000);
+        await page.waitFor(5000);
+    }
+    
     await debugScreenshot(page);
 
     await page.waitForSelector('#password_recovery_captcha_image', {timeout: 15000});
 
-    await debugScreenshot(page);
+    captchanotdone = true;
+    captchaattempts = 0;
+    while (captchanotdone) {
+        captchaattempts += 1;
+        if (captchaattempts > 6) {
+            LOG.error("Failed CAPTCHA too many times, aborting");
+            return;
+        }
 
-    let recaptchaimg = await page.$('#password_recovery_captcha_image');
-    let recaptchaurl = await page.evaluate((obj) => {
-        return obj.getAttribute('src');
-    }, recaptchaimg);
+        await debugScreenshot(page);
 
-    LOG.debug(recaptchaurl);
-    let captcharesult = await solveCaptcha(page, recaptchaurl);
+        let recaptchaimg = await page.$('#password_recovery_captcha_image');
+        let recaptchaurl = await page.evaluate((obj) => {
+            return obj.getAttribute('src');
+        }, recaptchaimg);
 
-    let input2 = await page.$('#password_recovery_captcha_guess');
-    await input2.press('Backspace');
-    await input2.type(captcharesult, { delay: 100 });
+        LOG.debug(recaptchaurl);
+        let captcharesult = await solveCaptcha(page, recaptchaurl);
 
-    await page.waitFor(3000);
+        let input2 = await page.$('#password_recovery_captcha_guess');
+        await input2.press('Backspace');
+        await input2.type(captcharesult, { delay: 100 });
 
-    await debugScreenshot(page);
+        await page.waitFor(3000);
 
-    let submit = await page.$('#password_recovery_ok_button');
-    await submit.click();
-    await page.waitFor(5000);
+        await debugScreenshot(page);
+
+        let submit = await page.$('#password_recovery_ok_button');
+        await submit.click();
+
+        await page.waitFor(5000);
+
+        let errormessagediv = await page.$('#password_recovery_error_message');
+        let errormessagedivstyle = await page.evaluate((obj) => {
+            return obj.getAttribute('style');
+        }, errormessagediv);
+        
+        if (errormessagedivstyle.includes("display: none")) {
+            captchanotdone = false;
+        }
+    }
 
     await debugScreenshot(page);
 

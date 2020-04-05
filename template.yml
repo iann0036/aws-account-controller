@@ -348,15 +348,13 @@ Resources:
                         Resource: arn:aws:logs:*:*:*
                       - Effect: Allow
                         Action:
-                          - s3:* # TODO: Lock down
+                          - s3:GetObject
                         Resource:
-                          - !Sub arn:aws:s3:::accountcontroller-email-processing-${AWS::Region}-${AWS::AccountId}
                           - !Sub arn:aws:s3:::accountcontroller-email-processing-${AWS::Region}-${AWS::AccountId}/*
                       - Effect: Allow
                         Action:
-                          - s3:* # TODO: Lock down
+                          - s3:PutObject
                         Resource:
-                          - !Sub arn:aws:s3:::${DebugBucket}
                           - !Sub arn:aws:s3:::${DebugBucket}/*
                       - Effect: Allow
                         Action:
@@ -374,21 +372,9 @@ Resources:
                           - organizations:ListAccounts
                           - organizations:ListTagsForResource
                           - organizations:TagResource
-                        Resource:
-                          - '*'
-                      - Effect: Allow
-                        Action:
                           - ses:SendRawEmail
-                        Resource:
-                          - '*'
-                      - Effect: Allow
-                        Action:
                           - ses:SetActiveReceiptRuleSet
                           - ses:DeleteReceiptRuleSet
-                        Resource:
-                          - '*'
-                      - Effect: Allow
-                        Action:
                           - events:PutTargets
                           - events:PutRule
                           - events:DeleteRule
