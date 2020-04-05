@@ -49,9 +49,9 @@ In order for you to easily build upon this system, the system makes heavy use of
 
 ### E-mail Forwarding
 
-[![Email Forwarding](assets/email.png)](assets/email.png)
-
 E-mails that are targetting the addresses of the root account will be forwarded by default to the master e-mail address.
+
+[![Email Forwarding](assets/email.png)](assets/email.png)
 
 You can specify a different destination per account by placing a tag with the key `AccountEmailForwardingAddress` on the account in Organizations.
 
@@ -66,13 +66,13 @@ You can also override the format of the subject line for forwarded e-mails. Duri
 
 ### Account Deletion
 
-[![Email Forwarding](assets/tags.png)](assets/tags.png)
-
 In order to elect to delete an account, simply tag an account within the Organizations console with the following:
 
 *Tag Key:* **delete**
 
 *Tag Value:* **true**
+
+[![Email Forwarding](assets/tags.png)](assets/tags.png)
 
 Once tagged, a process will perform the following actions on your behalf:
 
