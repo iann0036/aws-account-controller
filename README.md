@@ -4,8 +4,6 @@
 
 > :exclamation: **PLEASE READ [THE CAVEATS](https://onecloudplease.com/blog/automating-aws-account-deletion) OF THIS SOLUTION BEFORE CONTINUING**
 
-> :construction: The current state of the stack has little to no resilience against errors such as CAPTCHA failures - this notice will be removed as this reaches an acceptable level
-
 ## Prerequisites
 
 The following is required before proceeding:
