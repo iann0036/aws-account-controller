@@ -2,6 +2,8 @@
 
 > Manage the creation and deletion of sandbox-style accounts.
 
+[![Architecture Diagram](arch.svg)](arch.svg)
+
 > :exclamation: **PLEASE READ [THE CAVEATS](https://onecloudplease.com/blog/automating-aws-account-deletion) OF THIS SOLUTION BEFORE CONTINUING**
 
 ## Prerequisites
