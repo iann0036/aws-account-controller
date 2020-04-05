@@ -2,7 +2,7 @@
 
 > Manage the creation and deletion of sandbox-style accounts.
 
-[![Architecture Diagram](arch.svg)](arch.svg)
+[![Architecture Diagram](assets/arch.svg)](assets/arch.svg)
 
 > :exclamation: **PLEASE READ [THE CAVEATS](https://onecloudplease.com/blog/automating-aws-account-deletion) OF THIS SOLUTION BEFORE CONTINUING**
 
@@ -49,6 +49,8 @@ In order for you to easily build upon this system, the system makes heavy use of
 
 ### E-mail Forwarding
 
+[![Email Forwarding](assets/email.png)](assets/email.png)
+
 E-mails that are targetting the addresses of the root account will be forwarded by default to the master e-mail address.
 
 You can specify a different destination per account by placing a tag with the key `AccountEmailForwardingAddress` on the account in Organizations.
@@ -63,6 +65,8 @@ You can also override the format of the subject line for forwarded e-mails. Duri
 * {accountemail} - The root email address of the account
 
 ### Account Deletion
+
+[![Email Forwarding](assets/tags.png)](assets/tags.png)
 
 In order to elect to delete an account, simply tag an account within the Organizations console with the following:
 
