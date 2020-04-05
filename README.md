@@ -24,12 +24,12 @@ Click the above link to deploy the stack to your environment. This stack creates
 
 * Optionally, a Route 53 hosted zone (or provide your own by zone ID)
 * An MX record to SES inbound in the hosted zone
-* An event rule that triggers Lambda execution when an organizations account is tagged
 * Node.js Lambda Function, used for all actions performed, with appropriate permissions
 * Log group for the Lambda Function, with a short term expiry
 * An S3 bucket for debugging screenshots, with a short term expiry
 * An S3 bucket for storing raw e-mail content, with a short term expiry
 * An SES Receipt Rule Set, which is automatically promoted to be default
+* An event rule that triggers Lambda execution when an organizations account is tagged for deletion (if enabled)
 * An IAM user with a login profile, used to deploy a Connect instance
 
 If you prefer, you can also manually upsert the [template.yml](https://github.com/iann0036/aws-account-controller/blob/master/template.yml) stack from source.

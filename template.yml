@@ -4,6 +4,22 @@ Description: Custom resource provider for the account controller
 
 Parameters:
 
+    AccountCreationFunctionality:
+        Description: Manage SSO and other features required for account creation functionality
+        Type: String
+        Default: "true"
+        AllowedValues:
+          - "true"
+          - "false"
+
+    AccountDeletionFunctionality:
+        Description: Manage Connect and other features required for account deletion functionality
+        Type: String
+        Default: "true"
+        AllowedValues:
+          - "true"
+          - "false"
+
     MasterEmail:
         Description: The email address which will receive all root account correspondence
         Type: String
@@ -105,10 +121,20 @@ Parameters:
         Type: String
         Default: ''
 
+    SSOPortalAlias:
+        Description: The alias of the SSO portal (leave blank to use existing SSO)
+        Type: String
+        Default: ''
+
 Metadata: 
 
     AWS::CloudFormation::Interface: 
         ParameterGroups: 
+          - Label: 
+                default: "Global Features"
+            Parameters: 
+              - AccountCreationFunctionality
+              - AccountDeletionFunctionality
           - Label: 
                 default: "Email Configuration"
             Parameters: 
@@ -123,6 +149,10 @@ Metadata:
               - CCNumber
               - CCMonth
               - CCYear
+          - Label: 
+                default: "SSO Settings"
+            Parameters: 
+              - SSOPortalAlias
           - Label: 
                 default: "Other Settings"
             Parameters: 
@@ -159,6 +189,12 @@ Metadata:
                 default: "Log Level"
             EmailSubjectCustomization: 
                 default: "E-mail Subject Customization"
+            AccountCreationFunctionality: 
+                default: "Enable Account Creation Functionality"
+            AccountDeletionFunctionality: 
+                default: "Enable Account Deletion Functionality"
+            SSOPortalAlias: 
+                default: "SSO Portal Alias"
 
 Conditions:
 
@@ -318,6 +354,7 @@ Resources:
                     LOG_LEVEL: !Ref LogLevel
                     EMAIL_SUBJECT: !Ref EmailSubjectCustomization
                     SECRET_ARN: !Ref AutomationCredentials
+                    CONNECT_SSM_PARAMETER: !Ref ConnectProperties
             Runtime: nodejs12.x
             MemorySize: 1024
             Timeout: 900
@@ -358,12 +395,6 @@ Resources:
                           - !Sub arn:aws:s3:::${DebugBucket}/*
                       - Effect: Allow
                         Action:
-                          - lambda:GetFunctionConfiguration
-                          - lambda:UpdateFunctionConfiguration
-                        Resource:
-                          - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:AccountAutomator
-                      - Effect: Allow
-                        Action:
                           - organizations:DescribeAccount
                         Resource:
                           - !Sub arn:aws:organizations::${AWS::AccountId}:account/*
@@ -385,6 +416,12 @@ Resources:
                           - secretsmanager:GetSecretValue
                         Resource:
                           - !Ref AutomationCredentials
+                      - Effect: Allow
+                        Action:
+                          - ssm:GetParameter
+                          - ssm:PutParameter
+                        Resource:
+                          - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ConnectProperties}"
 
     EmailBucket:
         DependsOn:
@@ -511,3 +548,18 @@ Resources:
         Type: Custom::ConnectSetup
         Properties: 
             ServiceToken: !GetAtt LambdaFunction.Arn
+
+    ConnectProperties:
+        Type: AWS::SSM::Parameter
+        Properties:
+            Type: String
+            Value: ''
+            Description: Account Controller properties for Amazon Connect
+    
+    SSOSetup: 
+        DependsOn:
+          - LambdaLogGroup
+        Type: Custom::SSOSetup
+        Properties: 
+            ServiceToken: !GetAtt LambdaFunction.Arn
+            SSOPortalAlias: !Ref SSOPortalAlias

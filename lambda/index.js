@@ -33,12 +33,13 @@ var LOG = winston.createLogger({
 });
 
 var s3 = new AWS.S3();
-var lambda = new AWS.Lambda();
+var ssm = new AWS.SSM();
 var rekognition = new AWS.Rekognition();
 var organizations = new AWS.Organizations();
 var ses = new AWS.SES();
 var eventbridge = new AWS.EventBridge();
 var secretsmanager = new AWS.SecretsManager();
+
 
 const CAPTCHA_KEY = process.env.CAPTCHA_KEY;
 const MASTER_EMAIL = process.env.MASTER_EMAIL;
@@ -1168,22 +1169,21 @@ async function handleEmailInbound(page, event) {
                         await debugScreenshot(page);
                         
                         await new Promise((resolve, reject) => {
-                            lambda.getFunctionConfiguration({
-                                FunctionName: "AccountAutomator"
+                            ssm.getParameter({
+                                Name: process.env.CONNECT_SSM_PARAMETER
                             }, function (err, data) {
                                 if (err) {
                                     LOG.error(err, err.stack);
                                     reject();
                                 } else {
-                                    let variables = data['Environment']['Variables'];
+                                    let variables = JSON.parse(data['Parameter']['Value']);
                                     
                                     variables['CODE'] = phonecodetext;
                     
-                                    lambda.updateFunctionConfiguration({
-                                        FunctionName: "AccountAutomator",
-                                        Environment: {
-                                            Variables: variables
-                                        }
+                                    ssm.putParameter({
+                                        Name: process.env.CONNECT_SSM_PARAMETER,
+                                        Type: "String",
+                                        Value: JSON.stringify(variables)
                                     }, function (err, data) {
                                         if (err) {
                                             LOG.error(err, err.stack);
@@ -1580,33 +1580,23 @@ exports.handler = async (event, context) => {
                 LOG.info("Registered phone number: " + number);
 
                 await new Promise((resolve, reject) => {
-                    lambda.getFunctionConfiguration({
-                        FunctionName: "AccountAutomator"
+                    let variables = data['Environment']['Variables'];
+    
+                    ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(num => {
+                        variables['PROMPT_' + num] = prompts[num + '.wav'];
+                    });
+                    variables['PHONE_NUMBER'] = number['PhoneNumber'].replace(/[ -]/g, "")
+    
+                    ssm.putParameter({
+                        Name: process.env.CONNECT_SSM_PARAMETER,
+                        Type: "String",
+                        Value: JSON.stringify(variables)
                     }, function (err, data) {
                         if (err) {
                             LOG.error(err, err.stack);
                             reject();
-                        } else {
-                            let variables = data['Environment']['Variables'];
-            
-                            ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(num => {
-                                variables['PROMPT_' + num] = prompts[num + '.wav'];
-                            });
-                            variables['PHONE_NUMBER'] = number['PhoneNumber'].replace(/[ -]/g, "")
-            
-                            lambda.updateFunctionConfiguration({
-                                FunctionName: "AccountAutomator",
-                                Environment: {
-                                    Variables: variables
-                                }
-                            }, function (err, data) {
-                                if (err) {
-                                    LOG.error(err, err.stack);
-                                    reject();
-                                }
-                                resolve();
-                            });
                         }
+                        resolve();
                     });
                 });
             } else if (event.RequestType == "Delete") {
