@@ -1183,7 +1183,8 @@ async function handleEmailInbound(page, event) {
                                     ssm.putParameter({
                                         Name: process.env.CONNECT_SSM_PARAMETER,
                                         Type: "String",
-                                        Value: JSON.stringify(variables)
+                                        Value: JSON.stringify(variables),
+                                        Overwrite: true
                                     }, function (err, data) {
                                         if (err) {
                                             LOG.error(err, err.stack);
@@ -1580,7 +1581,7 @@ exports.handler = async (event, context) => {
                 LOG.info("Registered phone number: " + number);
 
                 await new Promise((resolve, reject) => {
-                    let variables = data['Environment']['Variables'];
+                    let variables = {};
     
                     ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(num => {
                         variables['PROMPT_' + num] = prompts[num + '.wav'];
@@ -1590,7 +1591,8 @@ exports.handler = async (event, context) => {
                     ssm.putParameter({
                         Name: process.env.CONNECT_SSM_PARAMETER,
                         Type: "String",
-                        Value: JSON.stringify(variables)
+                        Value: JSON.stringify(variables),
+                        Overwrite: true
                     }, function (err, data) {
                         if (err) {
                             LOG.error(err, err.stack);
@@ -1617,12 +1619,14 @@ exports.handler = async (event, context) => {
                 'Domain': domain
             });
         } catch(error) {
-            await debugScreenshot(page);
-
             await sendcfnresponse(event, context, "FAILED", {});
+
+            await debugScreenshot(page);
 
             throw error;
         }
+    } else if (event.ResourceType == "Custom::SSOSetup") {
+        await sendcfnresponse(event, context, "SUCCESS", {});
     } else {
         return context.succeed();
     }

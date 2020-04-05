@@ -31,7 +31,7 @@ Parameters:
         Default: "{subject} | From: {from} | Acct ID: {accountid} | Acct Email: {accountemail}"
 
     DomainName:
-        Description: The domain name which is used for all account root email addresses
+        Description: The domain name (or subdomain) which is used for all account root email addresses
         Type: String
 
     2CaptchaApiKey:
@@ -139,9 +139,9 @@ Metadata:
                 default: "Email Configuration"
             Parameters: 
               - MasterEmail
-              - EmailSubjectCustomization
               - DomainName
               - HostedZoneId
+              - EmailSubjectCustomization
           - Label: 
                 default: "Billing Credit Card"
             Parameters: 
@@ -200,6 +200,8 @@ Conditions:
 
     S3Defined: !Not [ !Equals [ '', !Ref S3Bucket ] ]
     HostedZoneNotDefined: !Equals [ '', !Ref HostedZoneId ]
+    AccountCreationEnabled: !Equals [ 'true', !Ref AccountCreationFunctionality ]
+    AccountDeletionEnabled: !Equals [ 'true', !Ref AccountDeletionFunctionality ]
 
 Mappings:
     RegionMap:
@@ -276,6 +278,7 @@ Resources:
               - !Sub '10 inbound-smtp.${AWS::Region}.amazonaws.com'
     
     OrgAccountTaggedForDeletionRule:
+        Condition: AccountDeletionEnabled
         Type: AWS::Events::Rule
         Properties:
             Description: Detect and begin processing accounts tagged for deletion
@@ -301,7 +304,8 @@ Resources:
               - Arn: !GetAtt LambdaFunction.Arn
                 Id: Action
 
-    LambdaEventRulePermission:
+    LambdaAccountDeletionEventRulePermission:
+        Condition: AccountDeletionEnabled
         Type: AWS::Lambda::Permission
         Properties:
             FunctionName: !Ref LambdaFunction
@@ -310,6 +314,7 @@ Resources:
             SourceArn: !GetAtt OrgAccountTaggedForDeletionRule.Arn
 
     LambdaConnectPermission:
+        Condition: AccountDeletionEnabled
         Type: AWS::Lambda::Permission
         Properties:
             FunctionName: !Ref LambdaFunction
@@ -326,7 +331,7 @@ Resources:
     LambdaFunction:
         DependsOn:
           - AutomationCredentials
-          - ConnectUser
+          - AutomationUser
           - LambdaLogGroup
         Type: AWS::Lambda::Function
         Properties:
@@ -505,7 +510,7 @@ Resources:
                             "aws:Referer":
                               - !Ref "AWS::AccountId"
 
-    ConnectUser:
+    AutomationUser:
         DependsOn:
           - AutomationCredentials
         Type: AWS::IAM::User
@@ -514,7 +519,7 @@ Resources:
             LoginProfile:
                 Password: !Sub "{{resolve:secretsmanager:${AutomationCredentials}:SecretString:password}}"
             Policies:
-              - PolicyName: ConnectAutomation
+              - PolicyName: root
                 PolicyDocument:
                     Version: '2012-10-17'
                     Statement:
@@ -541,22 +546,26 @@ Resources:
                 PasswordLength: 30
                 ExcludeCharacters: '"@/\'
     
-    ConnectSetup: 
+    ConnectSetup:
+        Condition: AccountDeletionEnabled
         DependsOn:
           - LambdaLogGroup
           - ReceiptRuleSet
+          - ConnectProperties
         Type: Custom::ConnectSetup
         Properties: 
             ServiceToken: !GetAtt LambdaFunction.Arn
 
     ConnectProperties:
+        Condition: AccountDeletionEnabled
         Type: AWS::SSM::Parameter
         Properties:
             Type: String
-            Value: ''
+            Value: '{}'
             Description: Account Controller properties for Amazon Connect
     
-    SSOSetup: 
+    SSOSetup:
+        Condition: AccountCreationEnabled
         DependsOn:
           - LambdaLogGroup
         Type: Custom::SSOSetup
