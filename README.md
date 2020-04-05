@@ -12,7 +12,7 @@ The following is required before proceeding:
 
 * A registered domain name or subdomain, which is publicly accessible
 * A credit card which will be used to apply payment information to terminated accounts
-* A [2captcha](https://2captcha.com/) account that is sufficiently topped-up with credit
+* A [2captcha](https://2captcha.com/) account that is sufficiently topped-up with credit ($10 would be more than enough)
 * A preferred master e-mail address to receive account correspondence to
 
 ## Installation
