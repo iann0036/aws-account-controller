@@ -126,6 +126,11 @@ Parameters:
         Type: String
         Default: ''
 
+    SSOManagerAppName:
+        Description: The name of the SSO application used to manage accounts
+        Type: String
+        Default: Account Manager
+
 Metadata: 
 
     AWS::CloudFormation::Interface: 
@@ -153,6 +158,7 @@ Metadata:
                 default: "SSO Settings"
             Parameters: 
               - SSOPortalAlias
+              - SSOManagerAppName
           - Label: 
                 default: "Other Settings"
             Parameters: 
@@ -195,6 +201,8 @@ Metadata:
                 default: "Enable Account Deletion Functionality"
             SSOPortalAlias: 
                 default: "SSO Portal Alias"
+            SSOManagerAppName: 
+                default: "SSO Account Manager Application Name"
 
 Conditions:
 
@@ -322,6 +330,15 @@ Resources:
             Principal: connect.amazonaws.com
             SourceAccount: !Ref AWS::AccountId
 
+    LambdaAPIGatewayPermission:
+        Condition: AccountCreationEnabled
+        Type: AWS::Lambda::Permission
+        Properties:
+            FunctionName: !Ref LambdaFunction
+            Action: lambda:InvokeFunction
+            Principal: apigateway.amazonaws.com
+            SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SAMLHttpApi}/*/*/*"
+
     LambdaLogGroup:
         Type: AWS::Logs::LogGroup
         Properties:
@@ -330,7 +347,6 @@ Resources:
 
     LambdaFunction:
         DependsOn:
-          - AutomationCredentials
           - AutomationUser
           - LambdaLogGroup
         Type: AWS::Lambda::Function
@@ -360,6 +376,8 @@ Resources:
                     EMAIL_SUBJECT: !Ref EmailSubjectCustomization
                     SECRET_ARN: !Ref AutomationCredentials
                     CONNECT_SSM_PARAMETER: !Ref ConnectProperties
+                    SSO_SSM_PARAMETER: !Ref SSOProperties
+                    DOMAIN_NAME: !Ref DomainName
             Runtime: nodejs12.x
             MemorySize: 1024
             Timeout: 900
@@ -427,6 +445,7 @@ Resources:
                           - ssm:PutParameter
                         Resource:
                           - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ConnectProperties}"
+                          - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${SSOProperties}"
 
     EmailBucket:
         DependsOn:
@@ -557,7 +576,6 @@ Resources:
             ServiceToken: !GetAtt LambdaFunction.Arn
 
     ConnectProperties:
-        Condition: AccountDeletionEnabled
         Type: AWS::SSM::Parameter
         Properties:
             Type: String
@@ -568,7 +586,64 @@ Resources:
         Condition: AccountCreationEnabled
         DependsOn:
           - LambdaLogGroup
+          - SSOProperties
         Type: Custom::SSOSetup
         Properties: 
             ServiceToken: !GetAtt LambdaFunction.Arn
             SSOPortalAlias: !Ref SSOPortalAlias
+            SSOManagerAppName: !Ref SSOManagerAppName
+            APIGatewayEndpoint: !Sub "https://${SAMLHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+    SSOProperties:
+        Type: AWS::SSM::Parameter
+        Properties:
+            Type: String
+            Value: '{}'
+            Description: Account Controller properties for AWS SSO
+
+    SAMLHttpApi:
+        Condition: AccountCreationEnabled
+        Type: AWS::ApiGatewayV2::Api
+        Properties:
+            Name: !Ref AWS::StackName
+            ProtocolType: HTTP
+            RouteSelectionExpression: "$request.method $request.path"
+            Version: "1.0"
+            CorsConfiguration:
+                AllowMethods:
+                  - GET
+                  - POST
+                  - PUT
+                  - DELETE
+                AllowOrigins:
+                  - "*"
+
+    SAMLHttpApiStage:
+        Condition: AccountCreationEnabled
+        Type: AWS::ApiGatewayV2::Stage
+        Properties:
+            ApiId: !Ref SAMLHttpApi
+            AutoDeploy: true
+            StageName: "$default"
+
+    SAMLHttpApiPostSamlRoute:
+        Condition: AccountCreationEnabled
+        Type: AWS::ApiGatewayV2::Route
+        Properties:
+            ApiId: !Ref SAMLHttpApi
+            AuthorizationType: NONE
+            RouteKey: "POST /saml"
+            Target: !Sub "integrations/${SAMLHttpApiIntegration}"
+
+    SAMLHttpApiIntegration:
+        Condition: AccountCreationEnabled
+        Type: AWS::ApiGatewayV2::Integration
+        Properties:
+            ApiId: !Ref SAMLHttpApi
+            ConnectionType: INTERNET
+            IntegrationMethod: POST
+            IntegrationType: AWS_PROXY
+            IntegrationUri: !GetAtt LambdaFunction.Arn
+            PayloadFormatVersion: "2.0"
+
+    
