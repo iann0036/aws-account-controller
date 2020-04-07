@@ -1619,6 +1619,10 @@ async function handleGetAccounts(event) {
         }
     }
 
+    useraccounts.sort(function(x, y) {
+        return y.JoinedTimestamp - x.JoinedTimestamp;
+    });
+
     return {
         "statusCode": 200,
         "isBase64Encoded": false,
