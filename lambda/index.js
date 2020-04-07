@@ -1614,7 +1614,7 @@ async function handleGetAccounts(event) {
                 useraccount['IsShared'] = true;
             }
         }
-        if (shouldAddToUserAccountsList) {
+        if (shouldAddToUserAccountsList && (!useraccount['IsDeleting'] || account.Status != "SUSPENDED")) { // ignore deleting, suspended accounts (deferred org removal)
             useraccounts.push(useraccount);
         }
     }
