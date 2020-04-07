@@ -628,22 +628,31 @@ Resources:
             AutoDeploy: true
             StageName: "$default"
 
-    SAMLHttpApiGetAccountsRoute:
+    SAMLHttpApiGetRoute:
+        Condition: AccountCreationEnabled
+        Type: AWS::ApiGatewayV2::Route
+        Properties:
+            ApiId: !Ref SAMLHttpApi
+            AuthorizationType: NONE
+            RouteKey: "GET /"
+            Target: !Sub "integrations/${SAMLHttpApiIntegration}"
+
+    SAMLHttpApiPostRoute:
+        Condition: AccountCreationEnabled
+        Type: AWS::ApiGatewayV2::Route
+        Properties:
+            ApiId: !Ref SAMLHttpApi
+            AuthorizationType: NONE
+            RouteKey: "POST /"
+            Target: !Sub "integrations/${SAMLHttpApiIntegration}"
+
+    SAMLHttpApiPostAccountsRoute:
         Condition: AccountCreationEnabled
         Type: AWS::ApiGatewayV2::Route
         Properties:
             ApiId: !Ref SAMLHttpApi
             AuthorizationType: NONE
             RouteKey: "POST /accounts"
-            Target: !Sub "integrations/${SAMLHttpApiIntegration}"
-
-    SAMLHttpApiPostSamlRoute:
-        Condition: AccountCreationEnabled
-        Type: AWS::ApiGatewayV2::Route
-        Properties:
-            ApiId: !Ref SAMLHttpApi
-            AuthorizationType: NONE
-            RouteKey: "POST /saml"
             Target: !Sub "integrations/${SAMLHttpApiIntegration}"
 
     SAMLHttpApiPostDeleteaccountRoute:

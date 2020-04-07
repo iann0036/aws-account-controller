@@ -281,7 +281,7 @@ async function createssoapp(page, properties) {
 
     let acsurl = await page.$('awsui-textfield[ng-model="configureApplication.loginURL"] > input');
     await acsurl.press('Backspace');
-    await acsurl.type(properties['APIGatewayEndpoint'] + "/saml", { delay: 100 });
+    await acsurl.type(properties['APIGatewayEndpoint'] + "/", { delay: 100 });
     
     let samlaudience = await page.$('awsui-textfield[ng-model="configureApplication.samlAudience"] > input');
     await samlaudience.press('Backspace');
@@ -1984,8 +1984,6 @@ function wrapHTML(user) {
                             </div>
                         \`);
 
-                        $('#accounts-count').html("0");
-
                         window.scrollTo(0, 0);
                     }
                 },
@@ -2296,7 +2294,19 @@ exports.handler = async (event, context) => {
 
             throw error;
         }
-    } else if (event.routeKey == "POST /saml") {
+    } else if (event.routeKey == "GET /") {
+        let ssoparamresponse = await ssm.getParameter({
+            Name: process.env.SSO_SSM_PARAMETER
+        }).promise();
+        let ssoproperties = JSON.parse(ssoparamresponse['Parameter']['Value']);
+        
+        return {
+            "statusCode": 302,
+            "headers": {
+                "Location": ssoproperties['SignOutURL']
+            }
+        };
+    } else if (event.routeKey == "POST /") {
         try {
             let resp = await handleSAMLResponse(event);
             return resp;
