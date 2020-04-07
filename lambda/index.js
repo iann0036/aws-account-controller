@@ -1010,362 +1010,360 @@ async function handleEmailInbound(page, event) {
         var body = '';
         var isdeletable = false;
         
-        await s3.getObject({
+        let data = await s3.getObject({
             Bucket: record.s3.bucket.name,
             Key: record.s3.object.key
-        }).promise().then(async (data) => {
-            await new Promise(async (resolve, reject) => {
-                LOG.debug("Started processing e-mail");
+        }).promise();
+        
+        var msg = InternetMessage.parse(data.Body.toString());
 
-                var msg = InternetMessage.parse(data.Body.toString());
+        email = msg.to;
+        body = msg.body;
 
-                email = msg.to;
-                body = msg.body;
+        var emailmatches = /<(.*)>/g.exec(msg.to);
+        if (emailmatches && emailmatches.length > 1) {
+            email = emailmatches[1];
+        }
 
-                var emailmatches = /<(.*)>/g.exec(msg.to);
-                if (emailmatches && emailmatches.length > 1) {
-                    email = emailmatches[1];
+        data = await organizations.listAccounts({
+            // no params
+        }).promise();
+        let accounts = data.Accounts;
+        while (data.NextToken) {
+            data = await organizations.listAccounts({
+                NextToken: data.NextToken
+            }).promise();
+    
+            accounts = accounts.concat(data.Accounts);
+        }
+    
+        for (const accountitem of accounts) {
+            if (accountitem.Email == email) {
+                account = accountitem;
+            }
+        }
+
+        var accountemailforwardingaddress = null;
+
+        if (account) {
+            let orgtags = await organizations.listTagsForResource({ // TODO: paginate
+                ResourceId: account.Id
+            }).promise();
+
+            orgtags.Tags.forEach(tag => {
+                if (tag.Key.toLowerCase() == "delete" && tag.Value.toLowerCase() == "true") {
+                    isdeletable = true;
                 }
-
-                let data = await organizations.listAccounts({
-                    // no params
-                }).promise();
-                let accounts = data.Accounts;
-                while (data.NextToken) {
-                    let moreaccounts = await organizations.listAccounts({
-                        NextToken: data.NextToken
-                    }).promise();
-            
-                    accounts = accounts.concat(moreaccounts.Accounts);
+                if (tag.Key.toLowerCase() == "accountemailforwardingaddress") {
+                    accountemailforwardingaddress = tag.Value;
                 }
-            
-                for (const accountitem of accounts) {
-                    if (accountitem.Email == email) {
-                        account = accountitem;
-                    }
-                }
-
-                var accountemailforwardingaddress = null;
-
-                if (account) {
-                    let orgtags = await organizations.listTagsForResource({ // TODO: paginate
-                        ResourceId: account.Id
-                    }).promise();
-
-                    orgtags.Tags.forEach(tag => {
-                        if (tag.Key.toLowerCase() == "delete" && tag.Value.toLowerCase() == "true") {
-                            isdeletable = true;
-                        }
-                        if (tag.Key.toLowerCase() == "accountemailforwardingaddress") {
-                            accountemailforwardingaddress = tag.Value;
-                        }
-                    });
-                }
-                
-                var accountid = "?";
-                var accountemail = "?";
-                var accountname= "?";
-                if (account) {
-                    accountid = account.Id || "?";
-                    accountemail = account.Email || "?";
-                    accountname = account.Name || "?";
-                }
-                var msgsubject = msg.subject || "";
-                var from = msg.from || "";
-                var to = msg.to || "";
-
-                msg.subject = process.env.EMAIL_SUBJECT.
-                    replace("{subject}", msgsubject).
-                    replace("{from}", from).
-                    replace("{to}", to).
-                    replace("{accountid}", accountid).
-                    replace("{accountname}", accountname).
-                    replace("{accountemail}", accountemail);
-
-                msg.to = accountemailforwardingaddress || "AWS Accounts Master <" + MASTER_EMAIL + ">";
-                msg.from = "AWS Accounts Master <" + MASTER_EMAIL + ">";
-                msg['return-path'] = "AWS Accounts Master <" + MASTER_EMAIL + ">";
-
-                var stringified = InternetMessage.stringify(msg);
-                
-                ses.sendRawEmail({
-                    Source: MASTER_EMAIL,
-                    Destinations: [msg.to],
-                    RawMessage: {
-                        Data: stringified
-                    }
-                }, async function (err, data) {
-                    if (err) {
-                        LOG.debug(err);
-
-                        msg.to = "AWS Accounts Master <" + MASTER_EMAIL + ">";
-                        
-                        await ses.sendRawEmail({
-                            Source: MASTER_EMAIL,
-                            Destinations: [MASTER_EMAIL],
-                            RawMessage: {
-                                Data: "To: " + msg.to + "\r\nFrom: " + msg.from + "\r\nSubject: " + msg.subject + "\r\n\r\n***CONTENT NOT PROCESSABLE***\r\n\r\nDownload the email from s3://" + record.s3.bucket.name + "/" + record.s3.object.key + "\r\n"
-                            }
-                        }).promise();
-                    } else {
-                        resolve();
-                    }
-                });
             });
+        }
 
-            if (!account) {
-                LOG.debug("No account found, aborting");
-                return;
+        await new Promise(async (resolve, reject) => {
+            var accountid = "?";
+            var accountemail = "?";
+            var accountname= "?";
+            if (account) {
+                accountid = account.Id || "?";
+                accountemail = account.Email || "?";
+                accountname = account.Name || "?";
+            }
+            var msgsubject = msg.subject || "";
+            var from = msg.from || "";
+            var to = msg.to || "";
+
+            msg.subject = process.env.EMAIL_SUBJECT.
+                replace("{subject}", msgsubject).
+                replace("{from}", from).
+                replace("{to}", to).
+                replace("{accountid}", accountid).
+                replace("{accountname}", accountname).
+                replace("{accountemail}", accountemail);
+
+            msg.to = accountemailforwardingaddress || "AWS Accounts Master <" + MASTER_EMAIL + ">";
+            msg.from = "AWS Accounts Master <" + MASTER_EMAIL + ">";
+            msg['return-path'] = "AWS Accounts Master <" + MASTER_EMAIL + ">";
+
+            var stringified = InternetMessage.stringify(msg);
+            
+            ses.sendRawEmail({
+                Source: MASTER_EMAIL,
+                Destinations: [msg.to],
+                RawMessage: {
+                    Data: stringified
+                }
+            }, async function (err, data) {
+                if (err) {
+                    LOG.debug(err);
+
+                    msg.to = "AWS Accounts Master <" + MASTER_EMAIL + ">";
+                    
+                    await ses.sendRawEmail({
+                        Source: MASTER_EMAIL,
+                        Destinations: [MASTER_EMAIL],
+                        RawMessage: {
+                            Data: "To: " + msg.to + "\r\nFrom: " + msg.from + "\r\nSubject: " + msg.subject + "\r\n\r\n***CONTENT NOT PROCESSABLE***\r\n\r\nDownload the email from s3://" + record.s3.bucket.name + "/" + record.s3.object.key + "\r\n"
+                        }
+                    }).promise();
+                }
+
+                resolve();
+            });
+        });
+
+        if (!account) {
+            LOG.debug("No account found, aborting");
+            return;
+        }
+
+        LOG.debug(body);
+
+        let filteredbody = body.replace(/=3D/g, '=').replace(/=\r\n/g, '');
+
+        let start = filteredbody.indexOf("https://signin.aws.amazon.com/resetpassword");
+        if (start !== -1) {
+            LOG.debug("Started processing password reset");
+
+            let secretsmanagerresponse = await secretsmanager.getSecretValue({
+                SecretId: process.env.SECRET_ARN
+            }).promise();
+
+            let secretdata = JSON.parse(secretsmanagerresponse.SecretString);
+
+            let end = filteredbody.indexOf("<", start);
+            let url = filteredbody.substring(start, end);
+
+            let parsedurl = new URL(url);
+            if (parsedurl.host != "signin.aws.amazon.com") {
+                throw "Unexpected reset password host";
             }
 
-            LOG.debug(body);
+            LOG.debug(url);
+            
+            await page.goto(url, {
+                timeout: 0,
+                waitUntil: ['domcontentloaded']
+            });
+            await page.waitFor(5000);
 
-            let filteredbody = body.replace(/=3D/g, '=').replace(/=\r\n/g, '');
+            await debugScreenshot(page);
 
-            let start = filteredbody.indexOf("https://signin.aws.amazon.com/resetpassword");
-            if (start !== -1) {
-                LOG.debug("Started processing password reset");
+            let newpwinput = await page.$('#new_password');
+            await newpwinput.press('Backspace');
+            await newpwinput.type(secretdata.password, { delay: 100 });
 
-                let secretsmanagerresponse = await secretsmanager.getSecretValue({
-                    SecretId: process.env.SECRET_ARN
-                }).promise();
+            let input2 = await page.$('#confirm_password');
+            await input2.press('Backspace');
+            await input2.type(secretdata.password, { delay: 100 });
 
-                let secretdata = JSON.parse(data.SecretString);
+            await page.click('#reset_password_submit');
+            await page.waitFor(5000);
 
-                let end = filteredbody.indexOf("<", start);
-                let url = filteredbody.substring(start, end);
+            LOG.info("Completed resetpassword link verification");
 
-                let parsedurl = new URL(url);
-                if (parsedurl.host != "signin.aws.amazon.com") {
-                    throw "Unexpected reset password host";
-                }
+            if (isdeletable) {
+                LOG.info("Begun delete account");
 
-                LOG.debug(url);
+                await loginStage1(page, email);
+
+                await debugScreenshot(page);
                 
-                await page.goto(url, {
-                    timeout: 0,
-                    waitUntil: ['domcontentloaded']
-                });
-                await page.waitFor(5000);
+                let input4 = await page.$('#password');
+                await input4.press('Backspace');
+                await input4.type(secretdata.password, { delay: 100 });
 
                 await debugScreenshot(page);
 
-                let newpwinput = await page.$('#new_password');
-                await newpwinput.press('Backspace');
-                await newpwinput.type(secretdata.password, { delay: 100 });
+                await page.click('#signin_button');
+                await page.waitFor(8000);
+                
+                await debugScreenshot(page);
 
-                let input2 = await page.$('#confirm_password');
-                await input2.press('Backspace');
-                await input2.type(secretdata.password, { delay: 100 });
+                await page.goto('https://portal.aws.amazon.com/billing/signup?client=organizations&enforcePI=True', {
+                    timeout: 0,
+                    waitUntil: ['domcontentloaded']
+                });
+                await page.waitFor(8000);
+                
+                await debugScreenshot(page);
+                LOG.debug("Screenshotted at portal");
+                LOG.debug(page.mainFrame().url());
+                // /confirmation is an activation period
+                if (page.mainFrame().url().split("#").pop() == "/paymentinformation") {
 
-                await page.click('#reset_password_submit');
-                await page.waitFor(5000);
+                    let input5 = await page.$('#credit-card-number');
+                    await input5.press('Backspace');
+                    await input5.type(secretdata.ccnumber, { delay: 100 });
 
-                LOG.info("Completed resetpassword link verification");
+                    await page.select('#expirationMonth', (parseInt(secretdata.ccmonth)-1).toString());
 
-                if (isdeletable) {
-                    LOG.info("Begun delete account");
-
-                    await loginStage1(page, email);
-
+                    await page.waitFor(2000);
                     await debugScreenshot(page);
-                    
-                    let input4 = await page.$('#password');
-                    await input4.press('Backspace');
-                    await input4.type(secretdata.password, { delay: 100 });
 
+                    let currentyear = new Date().getFullYear();
+
+                    await page.select('select[name=\'expirationYear\']', (parseInt(secretdata.ccyear)-currentyear).toString());
+
+                    let input6 = await page.$('#accountHolderName');
+                    await input6.press('Backspace');
+                    await input6.type(secretdata.ccname, { delay: 100 });
+
+                    await page.waitFor(2000);
                     await debugScreenshot(page);
 
-                    await page.click('#signin_button');
+                    await page.click('.form-submit-click-box > button');
+
                     await page.waitFor(8000);
-                    
-                    await debugScreenshot(page);
+                }
 
-                    await page.goto('https://portal.aws.amazon.com/billing/signup?client=organizations&enforcePI=True', {
-                        timeout: 0,
-                        waitUntil: ['domcontentloaded']
-                    });
-                    await page.waitFor(8000);
-                    
-                    await debugScreenshot(page);
-                    LOG.debug("Screenshotted at portal");
-                    LOG.debug(page.mainFrame().url());
-                    // /confirmation is an activation period
-                    if (page.mainFrame().url().split("#").pop() == "/paymentinformation") {
+                await debugScreenshot(page);
 
-                        let input5 = await page.$('#credit-card-number');
-                        await input5.press('Backspace');
-                        await input5.type(secretdata.ccnumber, { delay: 100 });
+                if (page.mainFrame().url().split("#").pop() == "/identityverification") {
+                    let usoption = await page.$('option[label="United States (+1)"]');
+                    let usvalue = await page.evaluate( (obj) => {
+                        return obj.getAttribute('value');
+                    }, usoption);
 
-                        await page.select('#expirationMonth', (parseInt(secretdata.ccmonth)-1).toString());
+                    await page.select('#countryCode', usvalue);
 
-                        await page.waitFor(2000);
-                        await debugScreenshot(page);
+                    let connectssmparameter = await ssm.getParameter({
+                        Name: process.env.CONNECT_SSM_PARAMETER
+                    }).promise();
 
-                        let currentyear = new Date().getFullYear();
+                    let variables = JSON.parse(connectssmparameter['Parameter']['Value']);
 
-                        await page.select('select[name=\'expirationYear\']', (parseInt(secretdata.ccyear)-currentyear).toString());
+                    let portalphonenumber = await page.$('#phoneNumber');
+                    await portalphonenumber.press('Backspace');
+                    await portalphonenumber.type(variables['PHONE_NUMBER'].replace("+1", ""), { delay: 100 });
 
-                        let input6 = await page.$('#accountHolderName');
-                        await input6.press('Backspace');
-                        await input6.type(secretdata.ccname, { delay: 100 });
-
-                        await page.waitFor(2000);
-                        await debugScreenshot(page);
-
-                        await page.click('.form-submit-click-box > button');
-
-                        await page.waitFor(8000);
-                    }
-
-                    await debugScreenshot(page);
-
-                    if (page.mainFrame().url().split("#").pop() == "/identityverification") {
-                        let usoption = await page.$('option[label="United States (+1)"]');
-                        let usvalue = await page.evaluate( (obj) => {
-                            return obj.getAttribute('value');
-                        }, usoption);
-
-                        await page.select('#countryCode', usvalue);
-
-                        let portalphonenumber = await page.$('#phoneNumber');
-                        await portalphonenumber.press('Backspace');
-                        await portalphonenumber.type(process.env.PHONE_NUMBER.replace("+1", ""), { delay: 100 });
-
-                        var captchanotdone = true;
-                        while (captchanotdone) {
-                            try {
-                                let submitc = await page.$('#btnCall');
-
-                                await debugScreenshot(page);
-                                let recaptchaimgx = await page.$('#imageCaptcha');
-                                let recaptchaurlx = await page.evaluate((obj) => {
-                                    return obj.getAttribute('src');
-                                }, recaptchaimgx);
-
-                                LOG.debug("CAPTCHA IMG URL:");
-                                LOG.debug(recaptchaurlx);
-                                let result = await solveCaptcha(page, recaptchaurlx);
-
-                                LOG.debug("CAPTCHA RESULT:");
-                                LOG.debug(result);
-
-                                let input32 = await page.$('#guess');
-                                await input32.press('Backspace');
-                                await input32.type(result, { delay: 100 });
-
-                                await debugScreenshot(page);
-                                await submitc.click();
-                                await page.waitFor(5000);
-
-                                await debugScreenshot(page);
-
-                                await page.waitForSelector('.phone-pin-number', {timeout: 5000});
-                                
-                                captchanotdone = false;
-                            } catch (error) {
-                                LOG.error(error);
-                            }
-                        }
-
-                        let phonecode = await page.$('.phone-pin-number > span');
-                        let phonecodetext = await page.evaluate(el => el.textContent, phonecode);
-
-                        await debugScreenshot(page);
-
-                        let connectssmparameter = await ssm.getParameter({
-                            Name: process.env.CONNECT_SSM_PARAMETER
-                        }).promise();
-
-                        let variables = JSON.parse(connectssmparameter['Parameter']['Value']);
-                                    
-                        variables['CODE'] = phonecodetext;
-        
-                        await ssm.putParameter({
-                            Name: process.env.CONNECT_SSM_PARAMETER,
-                            Type: "String",
-                            Value: JSON.stringify(variables),
-                            Overwrite: true
-                        }).promise();
-
-                        await page.waitFor(20000);
-                        
-                        await debugScreenshot(page);
-
-                        await page.click('#verification-complete-button');
-
-                        await page.waitFor(3000);
-                        
-                        await debugScreenshot(page);
-
-                    }
-
-                    if (page.mainFrame().url().split("#").pop() == "/support" || page.mainFrame().url().split("#").pop() == "/confirmation") {
-                        await page.goto('https://console.aws.amazon.com/billing/rest/v1.0/account', {
-                            timeout: 0,
-                            waitUntil: ['domcontentloaded']
-                        });
-
-                        await page.waitFor(3000);
-
-                        await debugScreenshot(page);
-
-                        let accountstatuspage = await page.content();
-
-                        LOG.debug(accountstatuspage);
-
-                        let issuspended = accountstatuspage.includes("\"accountStatus\":\"Suspended\"");
-
-                        if (!issuspended) {
-                            await page.goto('https://console.aws.amazon.com/billing/home?#/account', {
-                                timeout: 0,
-                                waitUntil: ['domcontentloaded']
-                            });
-
-                            await page.waitFor(8000);
+                    var captchanotdone = true;
+                    while (captchanotdone) {
+                        try {
+                            let submitc = await page.$('#btnCall');
 
                             await debugScreenshot(page);
+                            let recaptchaimgx = await page.$('#imageCaptcha');
+                            let recaptchaurlx = await page.evaluate((obj) => {
+                                return obj.getAttribute('src');
+                            }, recaptchaimgx);
 
-                            let closeaccountcbs = await page.$$('.close-account-checkbox > input');
-                            await closeaccountcbs.forEach(async (cb) => {
-                                await cb.click();
-                            });
+                            LOG.debug("CAPTCHA IMG URL:");
+                            LOG.debug(recaptchaurlx);
+                            let result = await solveCaptcha(page, recaptchaurlx);
 
-                            await page.waitFor(1000);
+                            LOG.debug("CAPTCHA RESULT:");
+                            LOG.debug(result);
+
+                            let input32 = await page.$('#guess');
+                            await input32.press('Backspace');
+                            await input32.type(result, { delay: 100 });
 
                             await debugScreenshot(page);
-
-                            await page.click('.btn-danger'); // close account button
-
-                            await page.waitFor(1000);
-
-                            await debugScreenshot(page);
-
-                            await page.click('.modal-footer > button.btn-danger'); // confirm close account button
-
+                            await submitc.click();
                             await page.waitFor(5000);
 
                             await debugScreenshot(page);
 
-                            await organizations.tagResource({
-                                ResourceId: account.Id,
-                                Tags: [{
-                                    Key: "AccountDeletionTime",
-                                    Value: (new Date()).toISOString()
-                                }]
-                            }).promise();
+                            await page.waitForSelector('.phone-pin-number', {timeout: 5000});
+                            
+                            captchanotdone = false;
+                        } catch (error) {
+                            LOG.error(error);
                         }
-
-                        await removeAccountFromOrg(account);
-                    } else {
-                        LOG.warn("Unsure of location, send help! - " + page.mainFrame().url());
                     }
+
+                    let phonecode = await page.$('.phone-pin-number > span');
+                    let phonecodetext = await page.evaluate(el => el.textContent, phonecode);
+
+                    await debugScreenshot(page);
+                                
+                    variables['CODE'] = phonecodetext;
+    
+                    await ssm.putParameter({
+                        Name: process.env.CONNECT_SSM_PARAMETER,
+                        Type: "String",
+                        Value: JSON.stringify(variables),
+                        Overwrite: true
+                    }).promise();
+
+                    await page.waitFor(20000);
+                    
+                    await debugScreenshot(page);
+
+                    await page.click('#verification-complete-button');
+
+                    await page.waitFor(3000);
+                    
+                    await debugScreenshot(page);
+
                 }
-                
-            } else {
-                LOG.debug("No password reset found");
+
+                if (page.mainFrame().url().split("#").pop() == "/support" || page.mainFrame().url().split("#").pop() == "/confirmation") {
+                    await page.goto('https://console.aws.amazon.com/billing/rest/v1.0/account', {
+                        timeout: 0,
+                        waitUntil: ['domcontentloaded']
+                    });
+
+                    await page.waitFor(3000);
+
+                    await debugScreenshot(page);
+
+                    let accountstatuspage = await page.content();
+
+                    LOG.debug(accountstatuspage);
+
+                    let issuspended = accountstatuspage.includes("\"accountStatus\":\"Suspended\"");
+
+                    if (!issuspended) {
+                        await page.goto('https://console.aws.amazon.com/billing/home?#/account', {
+                            timeout: 0,
+                            waitUntil: ['domcontentloaded']
+                        });
+
+                        await page.waitFor(8000);
+
+                        await debugScreenshot(page);
+
+                        let closeaccountcbs = await page.$$('.close-account-checkbox > input');
+                        await closeaccountcbs.forEach(async (cb) => {
+                            await cb.click();
+                        });
+
+                        await page.waitFor(1000);
+
+                        await debugScreenshot(page);
+
+                        await page.click('.btn-danger'); // close account button
+
+                        await page.waitFor(1000);
+
+                        await debugScreenshot(page);
+
+                        await page.click('.modal-footer > button.btn-danger'); // confirm close account button
+
+                        await page.waitFor(5000);
+
+                        await debugScreenshot(page);
+
+                        await organizations.tagResource({
+                            ResourceId: account.Id,
+                            Tags: [{
+                                Key: "AccountDeletionTime",
+                                Value: (new Date()).toISOString()
+                            }]
+                        }).promise();
+                    }
+
+                    await removeAccountFromOrg(account);
+                } else {
+                    LOG.warn("Unsure of location, send help! - " + page.mainFrame().url());
+                }
             }
-        });
+            
+        } else {
+            LOG.debug("No password reset found");
+        }
     }
     
     return true;
@@ -1425,6 +1423,10 @@ async function triggerReset(page, event) {
     await loginStage1(page, event.email);
     
     await debugScreenshot(page);
+
+    await page.click('#root_forgot_password_link');
+
+    await page.waitFor(2000);
 
     await page.waitForSelector('#password_recovery_captcha_image', {timeout: 15000});
 
@@ -2170,11 +2172,17 @@ exports.handler = async (event, context) => {
 
         await handleEmailInbound(page, event);
     } else if (event.Name && event.Name == "ContactFlowEvent") {
+        let connectssmparameter = await ssm.getParameter({
+            Name: process.env.CONNECT_SSM_PARAMETER
+        }).promise();
+
+        let variables = JSON.parse(connectssmparameter['Parameter']['Value']);
+
         return {
-            "prompt1": process.env['PROMPT_' + process.env.CODE[0]],
-            "prompt2": process.env['PROMPT_' + process.env.CODE[1]],
-            "prompt3": process.env['PROMPT_' + process.env.CODE[2]],
-            "prompt4": process.env['PROMPT_' + process.env.CODE[3]]
+            "prompt1": variables['PROMPT_' + variables['CODE'][0]],
+            "prompt2": variables['PROMPT_' + variables['CODE'][1]],
+            "prompt3": variables['PROMPT_' + variables['CODE'][2]],
+            "prompt4": variables['PROMPT_' + variables['CODE'][3]]
         }
     } else if (event.ResourceType == "Custom::ConnectSetup") {
         let domain = event.StackId.split("-").pop();
