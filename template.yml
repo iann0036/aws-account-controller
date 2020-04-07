@@ -426,6 +426,8 @@ Resources:
                           - organizations:ListAccounts
                           - organizations:ListTagsForResource
                           - organizations:TagResource
+                          - organizations:CreateAccount
+                          - organizations:DescribeCreateAccountStatus
                           - ses:SendRawEmail
                           - ses:SetActiveReceiptRuleSet
                           - ses:DeleteReceiptRuleSet
@@ -626,6 +628,15 @@ Resources:
             AutoDeploy: true
             StageName: "$default"
 
+    SAMLHttpApiGetAccountsRoute:
+        Condition: AccountCreationEnabled
+        Type: AWS::ApiGatewayV2::Route
+        Properties:
+            ApiId: !Ref SAMLHttpApi
+            AuthorizationType: NONE
+            RouteKey: "POST /accounts"
+            Target: !Sub "integrations/${SAMLHttpApiIntegration}"
+
     SAMLHttpApiPostSamlRoute:
         Condition: AccountCreationEnabled
         Type: AWS::ApiGatewayV2::Route
@@ -633,6 +644,24 @@ Resources:
             ApiId: !Ref SAMLHttpApi
             AuthorizationType: NONE
             RouteKey: "POST /saml"
+            Target: !Sub "integrations/${SAMLHttpApiIntegration}"
+
+    SAMLHttpApiPostDeleteaccountRoute:
+        Condition: AccountCreationEnabled
+        Type: AWS::ApiGatewayV2::Route
+        Properties:
+            ApiId: !Ref SAMLHttpApi
+            AuthorizationType: NONE
+            RouteKey: "POST /deleteaccount"
+            Target: !Sub "integrations/${SAMLHttpApiIntegration}"
+
+    SAMLHttpApiPostCreateaccountRoute:
+        Condition: AccountCreationEnabled
+        Type: AWS::ApiGatewayV2::Route
+        Properties:
+            ApiId: !Ref SAMLHttpApi
+            AuthorizationType: NONE
+            RouteKey: "POST /createaccount"
             Target: !Sub "integrations/${SAMLHttpApiIntegration}"
 
     SAMLHttpApiIntegration:

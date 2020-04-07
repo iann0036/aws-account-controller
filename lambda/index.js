@@ -49,7 +49,7 @@ const sendcfnresponse = async (event, context, responseStatus, responseData, phy
     var responseBody = JSON.stringify({
         Status: responseStatus,
         Reason: "See the details in CloudWatch Log Stream: " + context.logStreamName,
-        PhysicalResourceId: physicalResourceId || context.logStreamName,
+        PhysicalResourceId: physicalResourceId || event.LogicalResourceId,
         StackId: event.StackId,
         RequestId: event.RequestId,
         LogicalResourceId: event.LogicalResourceId,
@@ -109,28 +109,21 @@ const solveCaptchaRekog = async (page, url) => {
     });
 
     var code = null;
-    
-    await new Promise(function (resolve, reject) {
-        rekognition.detectText({
-            Image: {
-                Bytes: Buffer.from(imgbody)
-            }
-        }, function(err, data) {
-            LOG.debug(data);
-            LOG.debug(err);
 
-            if (data) {
-                data.TextDetections.forEach(textDetection => {
-                    var text = textDetection.DetectedText.replace(/\ /g, "");
-                    if (text.length == 6) {
-                        code = text;
-                    }
-                });
+    let data = await rekognition.detectText({
+        Image: {
+            Bytes: Buffer.from(imgbody)
+        }
+    }).promise();
+
+    if (data) {
+        data.TextDetections.forEach(textDetection => {
+            var text = textDetection.DetectedText.replace(/\ /g, "");
+            if (text.length == 6) {
+                code = text;
             }
-            
-            resolve();
         });
-    });
+    }
 
     LOG.debug(code);
 
@@ -205,17 +198,11 @@ const debugScreenshot = async (page) => {
 };
 
 async function login(page) {
-    let secretdata = {};
-    await secretsmanager.getSecretValue({
+    let secretsmanagerresponse = await secretsmanager.getSecretValue({
         SecretId: process.env.SECRET_ARN
-    }, function (err, data) {
-        if (err) {
-            LOG.error(err, err.stack);
-            reject();
-        }
-
-        secretdata = JSON.parse(data.SecretString);
     }).promise();
+
+    let secretdata = JSON.parse(secretsmanagerresponse.SecretString);
 
     var passwordstr = secretdata.password;
 
@@ -315,20 +302,12 @@ async function createssoapp(page, properties) {
 
     await debugScreenshot(page);
 
-    await new Promise((resolve, reject) => {
-        ssm.putParameter({
-            Name: process.env.SSO_SSM_PARAMETER,
-            Type: "String",
-            Value: JSON.stringify(properties),
-            Overwrite: true
-        }, function (err, data) {
-            if (err) {
-                LOG.error(err, err.stack);
-                reject();
-            }
-            resolve();
-        });
-    });
+    await ssm.putParameter({
+        Name: process.env.SSO_SSM_PARAMETER,
+        Type: "String",
+        Value: JSON.stringify(properties),
+        Overwrite: true
+    }).promise();
 
     // map attributes
 
@@ -1048,56 +1027,38 @@ async function handleEmailInbound(page, event) {
                     email = emailmatches[1];
                 }
 
-                await new Promise(async (resolve, reject) => {
-                    organizations.listAccounts({
-                        // no params
-                    }, async function (err, data) {
-                        if (err) {
-                            LOG.error(err);
-                        }
-    
-                        accounts = data.Accounts;
-                        while (data.NextToken) {
-                            await new Promise(async (xresolve, reject) => {
-                                organizations.listAccounts({
-                                    x: data.NextToken
-                                }, async function (err, xdata) {
-                                    accounts = accounts.concat(xdata.Accounts);
-                                    data = xdata;
-                                    xresolve();
-                                });
-                            });
-                        }
-        
-                        accounts.forEach(accountitem => {
-                            if (accountitem.Email == email) {
-                                account = accountitem;
-                            }
-                        });
-    
-                        LOG.debug(account);
-        
-                        resolve();
-                    });
-                });
+                let data = await organizations.listAccounts({
+                    // no params
+                }).promise();
+                let accounts = data.Accounts;
+                while (data.NextToken) {
+                    let moreaccounts = await organizations.listAccounts({
+                        NextToken: data.NextToken
+                    }).promise();
+            
+                    accounts = accounts.concat(moreaccounts.Accounts);
+                }
+            
+                for (const accountitem of accounts) {
+                    if (accountitem.Email == email) {
+                        account = accountitem;
+                    }
+                }
 
                 var accountemailforwardingaddress = null;
 
                 if (account) {
-                    await new Promise(async (resolve, reject) => {
-                        organizations.listTagsForResource({ // TODO: paginate
-                            ResourceId: account.Id
-                        }, async function (err, data) {
-                            data.Tags.forEach(tag => {
-                                if (tag.Key.toLowerCase() == "delete" && tag.Value.toLowerCase() == "true") {
-                                    isdeletable = true;
-                                }
-                                if (tag.Key.toLowerCase() == "accountemailforwardingaddress") {
-                                    accountemailforwardingaddress = tag.Value;
-                                }
-                            });
-                            resolve();
-                        });
+                    let orgtags = await organizations.listTagsForResource({ // TODO: paginate
+                        ResourceId: account.Id
+                    }).promise();
+
+                    orgtags.Tags.forEach(tag => {
+                        if (tag.Key.toLowerCase() == "delete" && tag.Value.toLowerCase() == "true") {
+                            isdeletable = true;
+                        }
+                        if (tag.Key.toLowerCase() == "accountemailforwardingaddress") {
+                            accountemailforwardingaddress = tag.Value;
+                        }
                     });
                 }
                 
@@ -1133,23 +1094,19 @@ async function handleEmailInbound(page, event) {
                     RawMessage: {
                         Data: stringified
                     }
-                }, function (err, data) {
+                }, async function (err, data) {
                     if (err) {
                         LOG.debug(err);
 
                         msg.to = "AWS Accounts Master <" + MASTER_EMAIL + ">";
                         
-                        ses.sendRawEmail({
+                        await ses.sendRawEmail({
                             Source: MASTER_EMAIL,
                             Destinations: [MASTER_EMAIL],
                             RawMessage: {
                                 Data: "To: " + msg.to + "\r\nFrom: " + msg.from + "\r\nSubject: " + msg.subject + "\r\n\r\n***CONTENT NOT PROCESSABLE***\r\n\r\nDownload the email from s3://" + record.s3.bucket.name + "/" + record.s3.object.key + "\r\n"
                             }
-                        }, function (err, data) {
-                            LOG.debug(err);
-
-                            resolve();
-                        });
+                        }).promise();
                     } else {
                         resolve();
                     }
@@ -1169,17 +1126,11 @@ async function handleEmailInbound(page, event) {
             if (start !== -1) {
                 LOG.debug("Started processing password reset");
 
-                let secretdata = {};
-                await secretsmanager.getSecretValue({
+                let secretsmanagerresponse = await secretsmanager.getSecretValue({
                     SecretId: process.env.SECRET_ARN
-                }, function (err, data) {
-                    if (err) {
-                        LOG.error(err, err.stack);
-                        reject();
-                    }
-        
-                    secretdata = JSON.parse(data.SecretString);
                 }).promise();
+
+                let secretdata = JSON.parse(data.SecretString);
 
                 let end = filteredbody.indexOf("<", start);
                 let url = filteredbody.substring(start, end);
@@ -1321,34 +1272,21 @@ async function handleEmailInbound(page, event) {
                         let phonecodetext = await page.evaluate(el => el.textContent, phonecode);
 
                         await debugScreenshot(page);
-                        
-                        await new Promise((resolve, reject) => {
-                            ssm.getParameter({
-                                Name: process.env.CONNECT_SSM_PARAMETER
-                            }, function (err, data) {
-                                if (err) {
-                                    LOG.error(err, err.stack);
-                                    reject();
-                                } else {
-                                    let variables = JSON.parse(data['Parameter']['Value']);
+
+                        let connectssmparameter = await ssm.getParameter({
+                            Name: process.env.CONNECT_SSM_PARAMETER
+                        }).promise();
+
+                        let variables = JSON.parse(connectssmparameter['Parameter']['Value']);
                                     
-                                    variables['CODE'] = phonecodetext;
-                    
-                                    ssm.putParameter({
-                                        Name: process.env.CONNECT_SSM_PARAMETER,
-                                        Type: "String",
-                                        Value: JSON.stringify(variables),
-                                        Overwrite: true
-                                    }, function (err, data) {
-                                        if (err) {
-                                            LOG.error(err, err.stack);
-                                            reject();
-                                        }
-                                        resolve();
-                                    });
-                                }
-                            });
-                        });
+                        variables['CODE'] = phonecodetext;
+        
+                        await ssm.putParameter({
+                            Name: process.env.CONNECT_SSM_PARAMETER,
+                            Type: "String",
+                            Value: JSON.stringify(variables),
+                            Overwrite: true
+                        }).promise();
 
                         await page.waitFor(20000);
                         
@@ -1440,9 +1378,9 @@ async function removeAccountFromOrg(account) {
     if (now > threshold) {
         await organizations.removeAccountFromOrganization({
             AccountId: account.Id
-        }, function(err, data) {
-            LOG.info("Removed account from Org");
-        });
+        }).promise();
+
+        LOG.info("Removed account from Org");
 
         return true;
     } else {
@@ -1566,25 +1504,13 @@ function decodeForm(form) {
     return ret
 }
 
-async function handleSAMLRequest(event) {
-    let ssoproperties = await new Promise((resolve, reject) => {
-        ssm.getParameter({
-            Name: process.env.SSO_SSM_PARAMETER
-        }, function (err, data) {
-            if (err) {
-                LOG.error(err, err.stack);
-                reject();
-            } else {
-                resolve(JSON.parse(data['Parameter']['Value']));
-            }
-        });
-    });
+async function getUserBySAML(samlresponse) {
+    let ssoparamresponse = await ssm.getParameter({
+        Name: process.env.SSO_SSM_PARAMETER
+    }).promise();
 
-    let body = event.body;
-    if (event.isBase64Encoded) {
-        body = Buffer.from(event.body, 'base64').toString('utf8');
-    }
-
+    let ssoproperties = JSON.parse(ssoparamresponse['Parameter']['Value']);
+    
     var sp_options = {
         entity_id: "https://" + process.env.DOMAIN_NAME + "/metadata.xml",
         private_key: "",
@@ -1602,18 +1528,26 @@ async function handleSAMLRequest(event) {
     };
     var idp = new saml2.IdentityProvider(idp_options);
 
-    var form = decodeForm(body);
+    let samlattrs = await decodeSAMLResponse(sp, idp, decodeURIComponent(samlresponse));
 
-    let samlattrs = await decodeSAMLResponse(sp, idp, decodeURIComponent(form['SAMLResponse']));
-
-    let user = {
+    return {
         'name': samlattrs['user']['attributes']['name'][0],
         'email': samlattrs['user']['attributes']['email'][0],
         'guid': samlattrs['user']['attributes']['guid'][0],
-        'samlresponse': form['SAMLResponse']
+        'samlresponse': decodeURIComponent(samlresponse),
+        'ssoprops': ssoproperties
     };
+}
 
-    var redirectURL = ssoproperties['APIGatewayEndpoint'];
+async function handleSAMLResponse(event) {
+    let body = event.body;
+    if (event.isBase64Encoded) {
+        body = Buffer.from(event.body, 'base64').toString('utf8');
+    }
+
+    var form = decodeForm(body);
+
+    let user = await getUserBySAML(form['SAMLResponse']);
 
     return {
         "statusCode": 200,
@@ -1621,33 +1555,321 @@ async function handleSAMLRequest(event) {
         "headers": {
             "Content-Type": "text/html"
         },
-        "body": wrapHTML(ssoproperties, user)
+        "body": wrapHTML(user)
     };
 }
 
-function wrapHTML(ssoprops, user) {
+async function handleGetAccounts(event) {
+    let body = event.body;
+    if (event.isBase64Encoded) {
+        body = Buffer.from(event.body, 'base64').toString('utf8');
+    }
+
+    var form = decodeForm(body);
+
+    let user = await getUserBySAML(form['SAMLResponse']);
+
+    let useraccounts = [];
+
+    let data = await organizations.listAccounts({
+        // no params
+    }).promise();
+    let accounts = data.Accounts;
+    while (data.NextToken) {
+        let moreaccounts = await organizations.listAccounts({
+            NextToken: data.NextToken
+        }).promise();
+
+        accounts = accounts.concat(moreaccounts.Accounts);
+    }
+
+    for (const account of accounts) {
+        let tags = await organizations.listTagsForResource({ // TODO: paginate
+            ResourceId: account.Id
+        }).promise();
+
+        let shouldAddToUserAccountsList = false;
+        let useraccount = {
+            'Id': account.Id,
+            'Email': account.Email,
+            'JoinedTimestamp': account.JoinedTimestamp,
+            'Name': account.Name
+        };
+        for (const tag of tags.Tags) {
+            if (tag.Key.toLowerCase() == "notes") {
+                useraccount['Notes'] = tag.Value.replace(/\+/g, " ");
+            }
+            if (tag.Key.toLowerCase() == "delete" && tag.Value.toLowerCase() == "true") {
+                useraccount['IsDeleting'] = true;
+            }
+            if (tag.Key.toLowerCase() == "ssocreationcomplete" && tag.Value.toLowerCase() == "false") {
+                useraccount['IsCreating'] = true;
+            }
+            if (tag.Key.toLowerCase() == "accountownerguid" && tag.Value == user.guid) {
+                shouldAddToUserAccountsList = true;
+                useraccount['IsOwner'] = true;
+            }
+            if (tag.Key.toLowerCase() == "sharedwithorg" && tag.Value.toLowerCase() == "true") {
+                shouldAddToUserAccountsList = true;
+                useraccount['IsShared'] = true;
+            }
+        }
+        if (shouldAddToUserAccountsList) {
+            useraccounts.push(useraccount);
+        }
+    }
+
+    return {
+        "statusCode": 200,
+        "isBase64Encoded": false,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "body": JSON.stringify({
+            'accounts': useraccounts
+        })
+    };
+}
+
+async function handleDeleteAccountRequest(event) {
+    let body = event.body;
+    if (event.isBase64Encoded) {
+        body = Buffer.from(event.body, 'base64').toString('utf8');
+    }
+
+    var form = decodeForm(body);
+
+    let user = await getUserBySAML(form['SAMLResponse']);
+
+    let account = null;
+    try {
+        account = await organizations.describeAccount({
+            AccountId: form['accountid']
+        }).promise();
+    } catch(err) {
+        LOG.debug(err);
+
+        return {
+            "statusCode": 404,
+            "isBase64Encoded": false,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": JSON.stringify({
+                'deleteAccountSuccess': false
+            })
+        };
+    }
+    
+    let tagdata = await organizations.listTagsForResource({
+        ResourceId: account.Account.Id
+    }).promise();
+
+    for (const tag of tagdata.Tags) {
+        if (tag.Key.toLowerCase() == "accountownerguid" && tag.Value == user.guid) {
+            await organizations.tagResource({
+                ResourceId: account.Account.Id,
+                Tags: [{
+                    Key: "delete",
+                    Value: "true"
+                }]
+            }).promise();
+
+            return {
+                "statusCode": 200,
+                "isBase64Encoded": false,
+                "headers": {
+                    "Content-Type": "application/json"
+                },
+                "body": JSON.stringify({
+                    'deleteAccountSuccess': true
+                })
+            };
+        }
+    }
+
+    return {
+        "statusCode": 403,
+        "isBase64Encoded": false,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "body": JSON.stringify({
+            'deleteAccountSuccess': false
+        })
+    };
+}
+
+async function handleCreateAccountRequest(event) {
+    let body = event.body;
+    if (event.isBase64Encoded) {
+        body = Buffer.from(event.body, 'base64').toString('utf8');
+    }
+
+    var form = decodeForm(body);
+
+    let user = await getUserBySAML(form['SAMLResponse']);
+
+    let accountemail = decodeURIComponent(form['emailprefix'].replace(/\+/g, ' ')) + "@" + process.env.DOMAIN_NAME;
+    let accountname = decodeURIComponent(form['accountname'].replace(/\+/g, ' '));
+    let notes = decodeURIComponent(form['notes'].replace(/\ /g, '+'));
+
+    if (!accountname.match(/^.{1,50}$/g)) {
+        return {
+            "statusCode": 400,
+            "isBase64Encoded": false,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": JSON.stringify({
+                'createAccountSuccess': false,
+                'reason': 'Please enter an account name that is from 1 to 50 characters long'
+            })
+        };
+    }
+
+    if (!accountemail.match(/^.{6,64}$/g)) {
+        return {
+            "statusCode": 400,
+            "isBase64Encoded": false,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": JSON.stringify({
+                'createAccountSuccess': false,
+                'reason': 'Please enter a valid email address that is from 6 to 64 characters long'
+            })
+        };
+    }
+
+    if (!notes.match(/^[a-zA-Z0-9\.\:\+\=@_\/\-]{0,256}$/g)) {
+        return {
+            "statusCode": 400,
+            "isBase64Encoded": false,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": JSON.stringify({
+                'createAccountSuccess': false,
+                'reason': 'The notes field can have up to 256 characters (valid characters: a-z, A-Z, 0-9, and . : = @ _ / - <space> )'
+            })
+        };
+    }
+
+    let createaccountop = await organizations.createAccount({
+        AccountName: accountname, 
+        Email: accountemail,
+        IamUserAccessToBilling: 'ALLOW',
+        RoleName: 'OrganizationAccountAccessRole'
+    }).promise();
+
+    while (createaccountop.CreateAccountStatus.State == "IN_PROGRESS") {
+        await new Promise((resolve) => {setTimeout(resolve, 2000)});
+
+        createaccountop = await organizations.describeCreateAccountStatus({
+            CreateAccountRequestId: createaccountop.CreateAccountStatus.Id
+        }).promise();
+    }
+
+    if (createaccountop.CreateAccountStatus.State != "SUCCEEDED") {
+        let reason = 'The account could not be created for an unknown reason';
+        if (createaccountop.CreateAccountStatus.FailureReason == "ACCOUNT_LIMIT_EXCEEDED") {
+            reason = 'The account could not be created because the Organizational limit has been exceeded';
+        } else if (createaccountop.CreateAccountStatus.FailureReason == "EMAIL_ALREADY_EXISTS") {
+            reason = 'The account could not be created as the email address already exists';
+        } else if (createaccountop.CreateAccountStatus.FailureReason == "INVALID_EMAIL") {
+            reason = 'The account could not be created due to an invalid email address';
+        } else if (createaccountop.CreateAccountStatus.FailureReason == "CONCURRENT_ACCOUNT_MODIFICATION") {
+            reason = 'The account could not be created due to a conflicting operation';
+        } else if (createaccountop.CreateAccountStatus.FailureReason == "INTERNAL_FAILURE") {
+            reason = 'The account could not be created due to an internal failure in the Organizations service';
+        }
+
+        return {
+            "statusCode": 503,
+            "isBase64Encoded": false,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": JSON.stringify({
+                'createAccountSuccess': false,
+                'reason': reason
+            })
+        };
+    }
+
+    let tags = [
+        {
+            Key: "AccountOwnerGUID",
+            Value: user.guid
+        },
+        {
+            Key: "SSOCreationComplete",
+            Value: "false"
+        }
+    ];
+
+    if (notes.length > 0) {
+        tags.push({
+            Key: "Notes",
+            Value: notes
+        })
+    }
+    if (form['shareaccount'] && form['shareaccount'] == "on") {
+        tags.push({
+            Key: "SharedWithOrg",
+            Value: "true"
+        })
+    }
+
+    await organizations.tagResource({
+        ResourceId: createaccountop.CreateAccountStatus.AccountId,
+        Tags: tags
+    }).promise();
+
+    return {
+        "statusCode": 200,
+        "isBase64Encoded": false,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "body": JSON.stringify({
+            'createAccountSuccess': true
+        })
+    };
+}
+
+function wrapHTML(user) {
     return `<!doctype html>
     <html lang="en">
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
         <meta name="description" content="">
-        <title>${ssoprops.SSOManagerAppName}</title>
+        <title>${user.ssoprops.SSOManagerAppName}</title>
 
         <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css" integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+        <style>
+        .fa-trash-alt:hover:before {
+            color: #f64f5f !important
+        }
+        </style>
+
         <script src="https://kit.fontawesome.com/a9a4873efc.js" crossorigin="anonymous"></script>
       </head>
       <body class="bg-light">
         <div class="container">
         <div class="row">
         <div class="col-md-12">
-        <p class="float-right mt-4 text-muted">${user.name} (${user.email})&nbsp;&nbsp;|&nbsp;&nbsp;<a href="${ssoprops.SignOutURL}">Back to SSO</a></p>
+        <p class="float-right mt-4 text-muted">${user.name} (${user.email})&nbsp;&nbsp;|&nbsp;&nbsp;<a href="${user.ssoprops.SignOutURL}">Back to SSO</a></p>
         </div>
         </div>
+
+        <div id="alerts"></div>
       
         <div class="py-5 text-center" style="padding-top: 1rem!important;">
         <svg class="d-block mx-auto mb-4" height="72" viewBox="0 0 64 64" width="72" xmlns="http://www.w3.org/2000/svg"><g id="AccMgrLogo" data-name="AccMgrLogo"><path d="m53.54 41.34a8.047 8.047 0 0 0 -4.54-4.76v-25.58h-44a2.006 2.006 0 0 0 -2 2v6h40v17.59c-.23.09-.46.2-.68.31a11.984 11.984 0 0 0 -22.15 4.14 10 10 0 0 0 .83 19.96h30a9.993 9.993 0 0 0 2.54-19.66z" fill="#bddbff"/><g fill="#57a4ff"><path d="m6 14h2v2h-2z"/><path d="m10 14h2v2h-2z"/><path d="m14 14h2v2h-2z"/><path d="m38 14h2v2h-2z"/><path d="m12 6h2v2h-2z"/><path d="m16 6h2v2h-2z"/><path d="m20 6h2v2h-2z"/><path d="m44 6h2v2h-2z"/><path d="m54.29 40.51a8.985 8.985 0 0 0 -4.29-4.55v-30.96a3.009 3.009 0 0 0 -3-3h-36a3.009 3.009 0 0 0 -3 3v5h-3a3.009 3.009 0 0 0 -3 3v30a3.009 3.009 0 0 0 3 3h6.23a10.874 10.874 0 0 0 -1.23 5 11.007 11.007 0 0 0 11 11h30a11 11 0 0 0 3.29-21.49zm-44.29-35.51a1 1 0 0 1 1-1h36a1 1 0 0 1 1 1v5h-38zm33.82 7h4.18v23.25a8.454 8.454 0 0 0 -4-.02v-22.23a3 3 0 0 0 -.18-1zm-39.82 1a1 1 0 0 1 1-1h36a1 1 0 0 1 1 1v5h-38zm1 31a1 1 0 0 1 -1-1v-23h38v14.75a12.956 12.956 0 0 0 -22.67 5.38 11.047 11.047 0 0 0 -6.78 3.87zm46 16h-30a9 9 0 0 1 -.74-17.96 1 1 0 0 0 .9-.84 10.982 10.982 0 0 1 20.3-3.79 1 1 0 0 0 1.32.38 6.846 6.846 0 0 1 3.22-.79 7 7 0 0 1 6.59 4.67.993.993 0 0 0 .69.63 9 9 0 0 1 -2.28 17.7z"/><path d="m52.776 44.239-.506 1.936a4.994 4.994 0 0 1 -1.27 9.825v2a6.994 6.994 0 0 0 1.776-13.761z"/><path d="m16 51a5.018 5.018 0 0 1 4.582-4.974l-.163-1.994a7 7 0 0 0 .581 13.968v-2a5.006 5.006 0 0 1 -5-5z"/><path d="m23 56h4v2h-4z"/></g></g></svg>
-        <h2>${ssoprops.SSOManagerAppName}</h2>
+        <h2>${user.ssoprops.SSOManagerAppName}</h2>
         <p class="lead">Below you can manage the AWS accounts that you have access to.</p>
       </div>
     
@@ -1655,34 +1877,21 @@ function wrapHTML(ssoprops, user) {
         <div class="col-md-6 order-md-1 mb-6">
           <h4 class="d-flex justify-content-between align-items-center mb-3">
             <span>Your accounts</span>
-            <span class="badge badge-secondary badge-pill">2</span>
+            <span id="accounts-count" class="badge badge-secondary badge-pill">-</span>
           </h4>
-          <ul class="list-group mb-3">
-            <li class="list-group-item d-flex justify-content-between lh-condensed">
-              <div>
-                <h6 class="my-0">Example 12</h6>
-                <small class="text-muted">Custom notes here</small>
-              </div>
-              <span><i class="fas fa-trash-alt text-danger"></i></span>
-            </li>
-            <li class="list-group-item d-flex justify-content-between lh-condensed">
-              <div>
-                <h6 class="my-0">Example 15&nbsp;&nbsp;<span class="badge badge-dark">SHARED</span></h6>
-                <small class="text-muted">Created by Joe Bloggs</small>
-              </div>
-              <span class="text-muted">&nbsp;</span>
-            </li>
+          <ul id="accounts-list" class="list-group mb-3">
           </ul>
         </div>
         <div class="col-md-1 order-md-2"></div>
         <div class="col-md-5 order-md-3">
           <h4 class="mb-3">Create account</h4>
-          <form class="needs-validation" novalidate>
-    
+          <form id="create-account-form" class="needs-validation" novalidate>
+            <input id="SAMLResponse" type="hidden" name="SAMLResponse" value="${user.samlresponse}">
+
             <div class="mb-3">
                 <label for="emailprefix">E-mail Prefix</label>
                 <div class="input-group">
-                    <input type="text" class="form-control" id="emailprefix" placeholder="some-identifier" required>
+                    <input type="text" class="form-control" id="emailprefix" name="emailprefix" placeholder="some-identifier" required>
                     <div class="input-group-prepend">
                         <span class="input-group-text">@${process.env.DOMAIN_NAME}</span>
                     </div>
@@ -1694,7 +1903,7 @@ function wrapHTML(ssoprops, user) {
     
             <div class="mb-3">
                 <label for="accountname">Account Name</label>
-                <input type="text" class="form-control" id="accountname" placeholder="My Account" required>
+                <input type="text" class="form-control" id="accountname" name="accountname" placeholder="My Account" required>
                 <div class="invalid-feedback">
                     An account name is required.
                 </div>
@@ -1702,20 +1911,35 @@ function wrapHTML(ssoprops, user) {
             
             <div class="mb-3">
                 <label for="notes">Notes <span class="text-muted">(Optional)</span></label>
-                <input type="text" class="form-control" id="notes">
+                <input type="text" class="form-control" id="notes" name="notes">
             </div>
     
             <hr class="mb-4">
 
             <div class="custom-control custom-checkbox">
-              <input type="checkbox" class="custom-control-input" id="shareaccount">
+              <input type="checkbox" class="custom-control-input" id="shareaccount" name="shareaccount">
               <label class="custom-control-label" for="shareaccount">This account can be accessed by everyone in my organization</label>
             </div>
 
             <hr class="mb-4">
 
-            <button class="btn btn-primary btn-lg btn-block" type="submit">Create Account</button>
+            <button id="create-account-submit-button" class="btn btn-primary btn-lg btn-block" type="submit">Create Account</button>
           </form>
+        </div>
+      </div>
+
+      <div class="modal fade" id="delete-account-modal" tabindex="-1" role="dialog" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+            <div class="modal-body">
+                <br />
+                <p>Are you sure you want to delete <strong id="delete-account-confirmation-text"></strong>?</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                <button id="delete-account-confirmation-button" data-accountid="" type="button" class="btn btn-danger">Delete Account</button>
+            </div>
+            </div>
         </div>
       </div>
     
@@ -1723,9 +1947,159 @@ function wrapHTML(ssoprops, user) {
         <p class="mb-1">For support, contact your administrator at <a href="mailto:${process.env.MASTER_EMAIL}">${process.env.MASTER_EMAIL}</a></p>
       </footer>
     </div>
-    <script src="https://code.jquery.com/jquery-3.4.1.slim.min.js" integrity="sha384-J6qa4849blE2+poT4WnyKhv5vZF5SrPo0iEjwBvKU7imGFAV0wwj1yYfoRSJoZ+n" crossorigin="anonymous"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js" integrity="sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo" crossorigin="anonymous"></script>
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js" integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6" crossorigin="anonymous"></script>
+    <script>
+        function refreshAccounts() {
+            $.ajax({
+                type: 'POST',
+                url: '/accounts',
+                data: 'SAMLResponse=' + $('#SAMLResponse').val(),
+                success: function(response) {
+                    $('#accounts-list').html('');
+                    $('#accounts-count').html(response.accounts.length);
+                    for (const account of response.accounts) {
+                        $('#accounts-list').append(\`
+                            <li class="list-group-item d-flex justify-content-between lh-condensed">
+                            <div>
+                                <h6 class="my-0">\${account.Name}\${account.IsShared ? '&nbsp;&nbsp;<span class="badge badge-dark">SHARED</span>' : ''}\${account.IsDeleting ? '&nbsp;&nbsp;<span class="badge badge-warning">DELETING</span>' : ''}\${account.IsCreating ? '&nbsp;&nbsp;<span class="badge badge-success">CREATING</span>' : ''}</h6>
+                                <small class="text-muted">Account ID: \${account.Id}</small><br />
+                                <small class="text-muted">Account E-mail: \${account.Email}</small><br />
+                                <small class="text-muted">Notes: \${account.Notes || ''}</small>
+                            </div>
+                            <span>\${((account.IsShared && !account.IsOwner) || account.IsDeleting || account.IsCreating) ? '' : \`<i class="fas fa-trash-alt text-danger" data-toggle="modal" data-target="#delete-account-modal" data-accountname="\${account.Name}" data-accountid="\${account.Id}"></i>\`}</span>
+                            </li>
+                        \`);
+                    }
+                },
+                error: function(response) {
+                    if ($('#alerts').html() == "") {
+                        $('#alerts').append(\`
+                            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                            <strong>Account List Failure</strong> The list of accounts could not be loaded for an unknown reason
+                            <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                                <span aria-hidden="true">&times;</span>
+                            </button>
+                            </div>
+                        \`);
+
+                        $('#accounts-count').html("0");
+
+                        window.scrollTo(0, 0);
+                    }
+                },
+            });
+        }
+
+        function deleteAccount(accountid) {
+            $.ajax({
+                type: 'POST',
+                url: '/deleteaccount',
+                data: 'accountid=' + accountid.trim() + '&SAMLResponse=' + $('#SAMLResponse').val(),
+                success: function(response) {
+                    $('#alerts').append(\`
+                        <div class="alert alert-success alert-dismissible fade show" role="alert">
+                        <strong>Account Deletion Requested</strong> Your AWS account deletion request has been successfully processed. This will occur within the next 5 minutes.
+                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                        </div>
+                    \`);
+
+                    $('#delete-account-modal').modal('hide');
+
+                    refreshAccounts();
+
+                    window.scrollTo(0, 0);
+                },
+                error: function(response) {
+                    $('#alerts').append(\`
+                        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        <strong>Account Creation Failure</strong> The account could not be deleted for an unknown reason
+                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                        </div>
+                    \`);
+
+                    $('#delete-account-modal').modal('hide');
+
+                    window.scrollTo(0, 0);
+                },
+            });
+        }
+
+        $('#create-account-form').submit(e => {
+            e.preventDefault();
+
+            $('#create-account-submit-button').attr('disabled', 'disabled');
+
+            $.ajax({
+                type: 'POST',
+                url: '/createaccount',
+                data: $('#create-account-form').serialize(),
+                success: function(response) {
+                    $('#alerts').append(\`
+                        <div class="alert alert-success alert-dismissible fade show" role="alert">
+                        <strong>Account Created</strong> Your AWS account has been created successfully. It will be available to use via SSO in a couple of minutes.
+                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                        </div>
+                    \`);
+
+                    // reset form
+                    $('#create-account-form').find('input[type="text"]').val('');
+                    $('#create-account-form').find('input[type="checkbox"]').prop('checked', false);
+                    $('#create-account-submit-button').removeAttr('disabled');
+
+                    refreshAccounts();
+
+                    window.scrollTo(0, 0);
+                },
+                error: function(response) {
+                    var reason = "The account could not be created for an unknown reason";
+                    if (response.responseJSON && response.responseJSON.reason) {
+                        reason = response.responseJSON.reason;
+                    }
+
+                    $('#alerts').append(\`
+                        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        <strong>Account Creation Failure</strong> \${reason}
+                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                        </div>
+                    \`);
+
+                    $('#create-account-submit-button').removeAttr('disabled');
+
+                    window.scrollTo(0, 0);
+                },
+            });
+        });
+
+        $(document).ready(function() {
+            $('#delete-account-modal').on('show.bs.modal', function (event) {
+                var button = $(event.relatedTarget);
+                var accountid = button.data('accountid');
+                var accountname = button.data('accountname');
+                
+                $('#delete-account-confirmation-text').html(accountname + " (" + accountid + ")");
+                $('#delete-account-confirmation-button').attr('data-accountid', accountid);
+            });
+
+            $('#delete-account-confirmation-button').click(function (event) {
+                $('#delete-account-confirmation-button').attr('disabled', 'disabled');
+                deleteAccount($('#delete-account-confirmation-button').attr('data-accountid'));
+            });
+
+            refreshAccounts();
+        });
+
+        setInterval(refreshAccounts, 10000);
+    </script>
     </body>
     </html>
     `;
@@ -1746,29 +2120,21 @@ exports.handler = async (event, context) => {
         });
 
         if (isdeletable) {
-            await new Promise(async (resolve, reject) => {
-                organizations.describeAccount({
-                    AccountId: event.detail.requestParameters.resourceId
-                }, async function (err, data) {
-                    if (err) {
-                        LOG.error(err);
-                    }
+            let data = await organizations.describeAccount({
+                AccountId: event.detail.requestParameters.resourceId
+            }).promise();
 
-                    browser = await puppeteer.launch({
-                        args: chromium.args,
-                        defaultViewport: chromium.defaultViewport,
-                        executablePath: await chromium.executablePath,
-                        headless: chromium.headless,
-                    });
-            
-                    let page = await browser.newPage();
-            
-                    await triggerReset(page, {
-                        'email': data.Account.Email
-                    });
-
-                    resolve();
-                });
+            browser = await puppeteer.launch({
+                args: chromium.args,
+                defaultViewport: chromium.defaultViewport,
+                executablePath: await chromium.executablePath,
+                headless: chromium.headless,
+            });
+    
+            let page = await browser.newPage();
+    
+            await triggerReset(page, {
+                'email': data.Account.Email
             });
         }
     } else if (event.email) {
@@ -1853,28 +2219,20 @@ exports.handler = async (event, context) => {
                     'Domain': domain
                 });
                 LOG.info("Registered phone number: " + number);
+                
+                let variables = {};
 
-                await new Promise((resolve, reject) => {
-                    let variables = {};
-    
-                    ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(num => {
-                        variables['PROMPT_' + num] = prompts[num + '.wav'];
-                    });
-                    variables['PHONE_NUMBER'] = number['PhoneNumber'].replace(/[ -]/g, "")
-    
-                    ssm.putParameter({
-                        Name: process.env.CONNECT_SSM_PARAMETER,
-                        Type: "String",
-                        Value: JSON.stringify(variables),
-                        Overwrite: true
-                    }, function (err, data) {
-                        if (err) {
-                            LOG.error(err, err.stack);
-                            reject();
-                        }
-                        resolve();
-                    });
+                ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(num => {
+                    variables['PROMPT_' + num] = prompts[num + '.wav'];
                 });
+                variables['PHONE_NUMBER'] = number['PhoneNumber'].replace(/[ -]/g, "")
+    
+                await ssm.putParameter({
+                    Name: process.env.CONNECT_SSM_PARAMETER,
+                    Type: "String",
+                    Value: JSON.stringify(variables),
+                    Overwrite: true
+                }).promise();
             } else if (event.RequestType == "Delete") {
                 await ses.setActiveReceiptRuleSet({
                     RuleSetName: "default-rule-set"
@@ -1939,9 +2297,69 @@ exports.handler = async (event, context) => {
             throw error;
         }
     } else if (event.routeKey == "POST /saml") {
-        let resp = await handleSAMLRequest(event);
+        try {
+            let resp = await handleSAMLResponse(event);
+            return resp;
+        } catch(err) {
+            LOG.error(err);
+        }
 
-        return resp;
+        return {
+            "statusCode": 500,
+            "isBase64Encoded": false,
+            "headers": {
+                "Content-Type": "index/html"
+            },
+            "body": ""
+        };
+    } else if (event.routeKey == "POST /accounts") {
+        try {
+            let resp = await handleGetAccounts(event);
+            return resp;
+        } catch(err) {
+            LOG.error(err);
+        }
+
+        return {
+            "statusCode": 500,
+            "isBase64Encoded": false,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": ""
+        };
+    } else if (event.routeKey == "POST /createaccount") {
+        try {
+            let resp = await handleCreateAccountRequest(event);
+            return resp;
+        } catch(err) {
+            LOG.error(err);
+        }
+
+        return {
+            "statusCode": 500,
+            "isBase64Encoded": false,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": ""
+        };
+    } else if (event.routeKey == "POST /deleteaccount") {
+        try {
+            let resp = await handleDeleteAccountRequest(event);
+            return resp;
+        } catch(err) {
+            LOG.error(err);
+        }
+        
+        return {
+            "statusCode": 500,
+            "isBase64Encoded": false,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": ""
+        };
     } else {
         return context.succeed();
     }
