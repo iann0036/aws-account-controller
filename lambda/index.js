@@ -2391,7 +2391,7 @@ exports.handler = async (event, context) => {
         budgetthresholdbeforedeletion = null;
         event.detail.requestParameters.tags.forEach(tag => {
             if (tag.key.toLowerCase() == "delete" && tag.value.toLowerCase() == "true") {
-                //isdeletable = true; TODO
+                isdeletable = true;
             }
             if (tag.key.toLowerCase() == "accountownerguid") {
                 accountowner = tag.value;
