@@ -25,6 +25,7 @@ var rp = require('request-promise');
 var winston = require('winston');
 var InternetMessage = require("internet-message");
 var saml2 = require('saml2-js');
+var dateFormat = require('dateformat');
 
 var LOG = winston.createLogger({
     level: process.env.LOG_LEVEL.toLowerCase(),
@@ -40,6 +41,7 @@ var organizations = new AWS.Organizations();
 var ses = new AWS.SES();
 var eventbridge = new AWS.EventBridge();
 var secretsmanager = new AWS.SecretsManager();
+var sts = new AWS.STS();
 
 const CAPTCHA_KEY = process.env.CAPTCHA_KEY;
 const MASTER_EMAIL = process.env.MASTER_EMAIL;
@@ -147,7 +149,7 @@ const solveCaptcha2captcha = async (page, url) => {
     })}).then(res => {
         LOG.debug(res);
         return res.split("|").pop();
-    });;
+    });
 
     var captcharesult = '';
     var i = 0;
@@ -1476,6 +1478,245 @@ async function triggerReset(page, event) {
     await page.waitFor(2000);
 };
 
+async function addBillingMonitor(page, details) {
+    let assumedrole = await sts.assumeRole({
+        RoleArn: 'arn:aws:iam::' + details['accountid'] + ':role/OrganizationAccountAccessRole',
+        RoleSessionName: 'AccountManagerAddBillingMonitor'
+    }).promise();
+
+    let policyid = null;
+    let policiesdata = await organizations.listPolicies({
+        Filter: 'SERVICE_CONTROL_POLICY'
+    }).promise();
+    let policies = policiesdata.Policies;
+
+    while (policiesdata.NextToken) {
+        policiesdata = await organizations.listPolicies({
+            Filter: 'SERVICE_CONTROL_POLICY',
+            NextToken: policiesdata.NextToken
+        }).promise();
+        policies.concat(policiesdata.Policies);
+    }
+
+    for (const policy of policies) {
+        if (policy.Name == "AccountManagerDenyBillingAlarmAccess") {
+            policyid = policy.Id;
+        }
+    }
+    
+    if (!policyid) {
+        policydata = await organizations.createPolicy({
+            Content: JSON.stringify({
+                Version: "2012-10-17",
+                Statement: {
+                    Effect: "Deny",
+                    Action: "*",
+                    Resource: "arn:aws:cloudwatch:us-east-1:*:alarm:AccountManagerDeletionBudgetMonitor",
+                    Condition: {
+                        StringNotLike: {
+                            'aws:PrincipalArn': 'arn:aws:iam::*:role/OrganizationAccountAccessRole'
+                        }
+                    }
+                }
+            }),
+            Description: 'Used to restrict access to the billing alarm',
+            Name: 'AccountManagerDenyBillingAlarmAccess',
+            Type: 'SERVICE_CONTROL_POLICY'
+        }).promise();
+        
+        policyid = policydata.Policy.PolicySummary.Id;
+    }
+
+    await organizations.attachPolicy({
+        PolicyId: policyid,
+        TargetId: details['accountid']
+    }).promise();
+
+    let childcloudwatch = new AWS.CloudWatch({
+        accessKeyId: assumedrole.Credentials.AccessKeyId,
+        secretAccessKey: assumedrole.Credentials.SecretAccessKey,
+        sessionToken: assumedrole.Credentials.SessionToken
+    });
+
+    let alarm = await childcloudwatch.putMetricAlarm({
+        AlarmName: 'AccountManagerDeletionBudgetMonitor',
+        ComparisonOperator: 'GreaterThanThreshold',
+        EvaluationPeriods: 1,
+        ActionsEnabled: true,
+        AlarmActions: [
+            process.env.ACCOUNT_DELETION_TOPIC
+        ],
+        AlarmDescription: 'Sends a request to delete this account to the account manager when the budget is reached',
+        DatapointsToAlarm: 1,
+        Dimensions: [{
+            Name: 'Currency',
+            Value: 'USD'
+        }],
+        MetricName: 'EstimatedCharges',
+        Namespace: 'AWS/Billing',
+        Period: 21600,
+        Statistic: 'Maximum',
+        Threshold: details['budgetthresholdbeforedeletion'],
+        TreatMissingData: 'ignore',
+        Unit: 'None'
+    }).promise();
+
+    LOG.debug(alarm);
+}
+
+async function setSSOOwner(page, details) {
+    let ssoparamresponse = await ssm.getParameter({
+        Name: process.env.SSO_SSM_PARAMETER
+    }).promise();
+
+    let ssoproperties = JSON.parse(ssoparamresponse['Parameter']['Value']);
+
+    await page.goto('https://console.aws.amazon.com/singlesignon/home?region=' + process.env.AWS_REGION + '#/accounts/organization/assignUsers?ids=' + details['accountid'] + '&step=userGroupsStep', {
+        timeout: 0,
+        waitUntil: ['domcontentloaded']
+    });
+
+    await page.waitFor(5000);
+
+    await debugScreenshot(page);
+
+    const cookies = await page.cookies();
+
+    let cookie = "";
+    cookies.forEach(cookieitem => {
+        cookie += cookieitem['name'] + "=" + cookieitem['value'] + "; ";
+    });
+    cookie = cookie.substr(0, cookie.length - 2);
+
+    let csrftoken = await page.$eval('head > meta[name="awsc-csrf-token"]', element => element.content);
+
+    //--//
+    
+    let directoryConfig = await rp({
+        uri: 'https://console.aws.amazon.com/singlesignon/api/peregrine',
+        method: 'POST',
+        body: JSON.stringify({
+            "method": "POST",
+            "path": "/control/",
+            "headers": {
+                "Content-Type": "application/json; charset=UTF-8",
+                "Content-Encoding": "amz-1.0",
+                "X-Amz-Target": "com.amazon.switchboard.service.SWBService.ListDirectoryAssociations",
+                "X-Amz-Date": dateFormat(new Date(), "GMT:ddd, dd mmm yyyy HH:MM:ss") + " GMT",
+                "Accept": "application/json, text/javascript, */*"
+            },
+            "region": "us-east-1",
+            "operation": "ListDirectoryAssociations",
+            "contentString": JSON.stringify({
+                "marker": null
+            })
+        }),
+        headers: {
+            'accept': 'application/json, text/plain, */*',
+            'content-type': 'application/json',
+            'x-csrf-token': csrftoken,
+            'cookie': cookie
+        }
+    });
+
+    let primaryDirectoryId = JSON.parse(directoryConfig).directoryAssociations[0].directoryId;
+
+    let userConfig = await rp({
+        uri: 'https://console.aws.amazon.com/singlesignon/api/identitystore',
+        method: 'POST',
+        body: JSON.stringify({
+            "method": "POST",
+            "path": "/identitystore/",
+            "headers": {
+                "Content-Type": "application/json; charset=UTF-8",
+                "Content-Encoding": "amz-1.0",
+                "X-Amz-Target": "com.amazonaws.identitystore.AWSIdentityStoreService.DescribeUsers",
+                "X-Amz-Date": "Wed, 08 Apr 2020 02:22:19 GMT",
+                "Accept": "application/json, text/javascript, */*"
+            },
+            "region":"us-east-1",
+            "operation":"DescribeUsers",
+            "contentString": JSON.stringify({
+                "IdentityStoreId": primaryDirectoryId,
+                "UserIds": [
+                    details['accountowner']
+                ]
+            })
+        }),
+        headers: {
+            'accept': 'application/json, text/plain, */*',
+            'content-type': 'application/json',
+            'x-csrf-token': csrftoken,
+            'cookie': cookie
+        }
+    });
+
+    let username = JSON.parse(userConfig).Users[0].UserName;
+
+    await page.click('awsui-select[ng-model="table.controlValues.selectedSearchValue"]');
+    await page.waitFor(200);
+
+    await page.click('li[data-value="userName"]');
+    await page.waitFor(200);
+
+    await debugScreenshot(page);
+
+    let usernamesearch = await page.$('awsui-textfield[ng-model="table.controlValues.search"] > input');
+    await usernamesearch.press('Backspace');
+    await usernamesearch.type(username, { delay: 100 });
+
+    await page.waitFor(5000);
+
+    await page.click('.select-all > .checkbox > awsui-checkbox');
+    await page.waitFor(200);
+
+    await debugScreenshot(page);
+
+    if (details['isshared']) {
+        LOG.debug("Sharing account with group");
+
+        let paneltabs = await page.$$('.awsui-tabs-tab > a');
+        await paneltabs[1].click();
+        await page.waitFor(5000);
+
+        await debugScreenshot(page);
+        
+        let groupsearch = await page.$('input[placeholder="Find groups by name"]'); // TODO: use a better selector
+        await groupsearch.press('Backspace');
+        await groupsearch.type('AccountManagerUsers', { delay: 100 });
+        await page.waitFor(5000);
+
+        await debugScreenshot(page);
+        
+        await page.click('div.group-name > div.selection > div.checkbox > awsui-checkbox');
+        await page.waitFor(200);
+
+        await debugScreenshot(page);
+    }
+
+    await page.click('.wizard-next-button');
+    await page.waitFor(3000);
+
+    let adminlabel = await page.$('div.cell-content > truncate[tooltip="AdministratorAccess"]');
+    await page.evaluate((obj) => {
+        obj.parentNode.parentNode.querySelector('div.selection > div.checkbox > awsui-checkbox').click();
+    }, adminlabel);
+    await page.waitFor(200);
+
+    await page.click('.wizard-next-button');
+    await page.waitFor(10000);
+
+    await debugScreenshot(page);
+
+    await organizations.tagResource({
+        ResourceId: details['accountid'],
+        Tags: [{
+            Key: "SSOCreationComplete",
+            Value: "true"
+        }]
+    }).promise();
+}
+
 async function decodeSAMLResponse(sp, idp, samlresponse) {
     let resp = await new Promise((resolve,reject) => {
         sp.post_assert(idp, {
@@ -1591,6 +1832,7 @@ async function handleGetAccounts(event) {
         }).promise();
 
         let shouldAddToUserAccountsList = false;
+        let isdeleted = false;
         let useraccount = {
             'Id': account.Id,
             'Email': account.Email,
@@ -1615,8 +1857,11 @@ async function handleGetAccounts(event) {
                 shouldAddToUserAccountsList = true;
                 useraccount['IsShared'] = true;
             }
+            if (tag.Key.toLowerCase() == "scheduledremovaltime") {
+                isdeleted = true;
+            }
         }
-        if (shouldAddToUserAccountsList && (!useraccount['IsDeleting'] || account.Status != "SUSPENDED")) { // ignore deleting, suspended accounts (deferred org removal)
+        if (shouldAddToUserAccountsList && !isdeleted) { // ignore deleting, suspended accounts (deferred org removal)
             useraccounts.push(useraccount);
         }
     }
@@ -1635,6 +1880,30 @@ async function handleGetAccounts(event) {
             'accounts': useraccounts
         })
     };
+}
+
+async function processSnsDeleteAccount(event) {
+    for (const record of event['Records']) {
+        if (record.EventSubscriptionArn.startsWith(process.env.ACCOUNT_DELETION_TOPIC)) {
+            let snsmessage = JSON.parse(record.Sns.Message);
+
+            let accountid = snsmessage.AWSAccountId;
+
+            let account = await organizations.describeAccount({
+                AccountId: accountid
+            }).promise();
+
+            LOG.info("Deleting account " + accountid + " due to budget alert");
+
+            await organizations.tagResource({
+                ResourceId: account.Account.Id,
+                Tags: [{
+                    Key: "Delete",
+                    Value: "true"
+                }]
+            }).promise();
+        }
+    }
 }
 
 async function handleDeleteAccountRequest(event) {
@@ -1676,7 +1945,7 @@ async function handleDeleteAccountRequest(event) {
             await organizations.tagResource({
                 ResourceId: account.Account.Id,
                 Tags: [{
-                    Key: "delete",
+                    Key: "Delete",
                     Value: "true"
                 }]
             }).promise();
@@ -2117,13 +2386,25 @@ exports.handler = async (event, context) => {
 
     if (event.source && event.source == "aws.organizations" && event.detail.eventName == "TagResource") {
         isdeletable = false;
+        accountowner = null;
+        isshared = false;
+        budgetthresholdbeforedeletion = null;
         event.detail.requestParameters.tags.forEach(tag => {
             if (tag.key.toLowerCase() == "delete" && tag.value.toLowerCase() == "true") {
-                isdeletable = true;
+                //isdeletable = true; TODO
+            }
+            if (tag.key.toLowerCase() == "accountownerguid") {
+                accountowner = tag.value;
+            }
+            if (tag.key.toLowerCase() == "budgetthresholdbeforedeletion") {
+                budgetthresholdbeforedeletion = tag.value;
+            }
+            if (tag.key.toLowerCase() == "sharedwithorg" && tag.value.toLowerCase() == "true") {
+                isshared = true;
             }
         });
 
-        if (isdeletable) {
+        if (isdeletable && process.env.DELETION_FUNCTIONALITY_ENABLED == "true") {
             let data = await organizations.describeAccount({
                 AccountId: event.detail.requestParameters.resourceId
             }).promise();
@@ -2139,6 +2420,32 @@ exports.handler = async (event, context) => {
     
             await triggerReset(page, {
                 'email': data.Account.Email
+            });
+        }
+
+        if (accountowner && process.env.CREATION_FUNCTIONALITY_ENABLED == "true") {
+            browser = await puppeteer.launch({
+                args: chromium.args,
+                defaultViewport: chromium.defaultViewport,
+                executablePath: await chromium.executablePath,
+                headless: chromium.headless,
+            });
+    
+            let page = await browser.newPage();
+
+            await login(page);
+
+            if (budgetthresholdbeforedeletion) {
+                await addBillingMonitor(page, {
+                    'accountid': event.detail.requestParameters.resourceId,
+                    'budgetthresholdbeforedeletion': budgetthresholdbeforedeletion
+                });
+            }
+    
+            await setSSOOwner(page, {
+                'accountowner': accountowner,
+                'accountid': event.detail.requestParameters.resourceId,
+                'isshared': isshared
             });
         }
     } else if (event.email) {
@@ -2160,7 +2467,7 @@ exports.handler = async (event, context) => {
                 Name: event.ruleName
             }).promise();
         }
-    } else if (event.Records) {
+    } else if (event.Records && event.Records[0] && event.Records[0].s3 && event.Records[0].s3.bucket) {
         browser = await puppeteer.launch({
             args: chromium.args,
             defaultViewport: chromium.defaultViewport,
@@ -2171,6 +2478,8 @@ exports.handler = async (event, context) => {
         let page = await browser.newPage();
 
         await handleEmailInbound(page, event);
+    } else if (event.Records && event.Records[0] && event.Records[0].Sns) {
+        await processSnsDeleteAccount(event);
     } else if (event.Name && event.Name == "ContactFlowEvent") {
         let connectssmparameter = await ssm.getParameter({
             Name: process.env.CONNECT_SSM_PARAMETER

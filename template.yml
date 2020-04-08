@@ -285,11 +285,10 @@ Resources:
             ResourceRecords:
               - !Sub '10 inbound-smtp.${AWS::Region}.amazonaws.com'
     
-    OrgAccountTaggedForDeletionRule:
-        Condition: AccountDeletionEnabled
+    OrgAccountTaggedRule:
         Type: AWS::Events::Rule
         Properties:
-            Description: Detect and begin processing accounts tagged for deletion
+            Description: Detect and begin processing accounts when tagged
             EventPattern: |
               {
                 "source": [
@@ -319,7 +318,7 @@ Resources:
             FunctionName: !Ref LambdaFunction
             Action: lambda:InvokeFunction
             Principal: events.amazonaws.com
-            SourceArn: !GetAtt OrgAccountTaggedForDeletionRule.Arn
+            SourceArn: !GetAtt OrgAccountTaggedRule.Arn
 
     LambdaConnectPermission:
         Condition: AccountDeletionEnabled
@@ -338,6 +337,24 @@ Resources:
             Action: lambda:InvokeFunction
             Principal: apigateway.amazonaws.com
             SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SAMLHttpApi}/*/*/*"
+
+    LambdaDeleteAccountEventsPermission:
+        Condition: AccountDeletionEnabled
+        Type: AWS::Lambda::Permission
+        Properties:
+            FunctionName: !Ref LambdaFunction
+            Action: lambda:InvokeFunction
+            Principal: events.amazonaws.com
+            SourceArn: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/ScheduledAccountDeletion-*"
+
+    LambdaDeleteAccountSNSPermission:
+        Condition: AccountDeletionEnabled
+        Type: AWS::Lambda::Permission
+        Properties:
+            FunctionName: !Ref LambdaFunction
+            Action: lambda:InvokeFunction
+            Principal: sns.amazonaws.com
+            SourceArn: !Ref AccountDeletionSNSTopic
 
     LambdaLogGroup:
         Type: AWS::Logs::LogGroup
@@ -378,6 +395,12 @@ Resources:
                     CONNECT_SSM_PARAMETER: !Ref ConnectProperties
                     SSO_SSM_PARAMETER: !Ref SSOProperties
                     DOMAIN_NAME: !Ref DomainName
+                    CREATION_FUNCTIONALITY_ENABLED: !Ref AccountCreationFunctionality
+                    DELETION_FUNCTIONALITY_ENABLED: !Ref AccountDeletionFunctionality
+                    ACCOUNT_DELETION_TOPIC: !If
+                      - AccountDeletionEnabled
+                      - !Ref AccountDeletionSNSTopic
+                      - !Ref AWS::NoValue
             Runtime: nodejs12.x
             MemorySize: 1024
             Timeout: 900
@@ -423,11 +446,20 @@ Resources:
                           - !Sub arn:aws:organizations::${AWS::AccountId}:account/*
                       - Effect: Allow
                         Action:
+                          - sts:AssumeRole
+                        Resource:
+                          - arn:aws:iam::*:role/OrganizationAccountAccessRole
+                      - Effect: Allow
+                        Action:
                           - organizations:ListAccounts
                           - organizations:ListTagsForResource
                           - organizations:TagResource
                           - organizations:CreateAccount
                           - organizations:DescribeCreateAccountStatus
+                          - organizations:DescribeOrganization
+                          - organizations:ListPolicies
+                          - organizations:CreatePolicy
+                          - organizations:AttachPolicy
                           - ses:SendRawEmail
                           - ses:SetActiveReceiptRuleSet
                           - ses:DeleteReceiptRuleSet
@@ -684,4 +716,33 @@ Resources:
             IntegrationUri: !GetAtt LambdaFunction.Arn
             PayloadFormatVersion: "2.0"
 
-    
+    AccountDeletionSNSTopic:
+        Condition: AccountDeletionEnabled
+        Type: AWS::SNS::Topic
+
+    AccountDeletionSNSTopicLambdaSubscription:
+        Condition: AccountDeletionEnabled
+        Type: AWS::SNS::Subscription
+        Properties:
+            Protocol: lambda
+            TopicArn: !Ref AccountDeletionSNSTopic
+            Endpoint: !GetAtt LambdaFunction.Arn
+          
+    AccountDeletionSNSTopicPolicy:
+        Condition: AccountDeletionEnabled
+        Type: AWS::SNS::TopicPolicy
+        Properties:
+            PolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                  - Effect: Allow
+                    Principal:
+                        AWS: "*"
+                    Action:
+                      - sns:Publish
+                    Resource: !Ref AccountDeletionSNSTopic
+                    Condition:
+                        ArnLike:
+                            aws:SourceArn: arn:aws:cloudwatch:us-east-1:*:alarm:AccountManagerDeletionBudgetMonitor
+            Topics:
+              - !Ref AccountDeletionSNSTopic

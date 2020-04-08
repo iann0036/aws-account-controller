@@ -67,9 +67,9 @@ You can also override the format of the subject line for forwarded e-mails. Duri
 
 ### Account Deletion
 
-In order to elect to delete an account, simply tag an account within the Organizations console with the following:
+In order to elect to delete an account, simply tag an account within the Organizations console with the following (case not sensitive):
 
-*Tag Key:* **delete**
+*Tag Key:* **Delete**
 
 *Tag Value:* **true**
 
