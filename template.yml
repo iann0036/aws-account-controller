@@ -25,10 +25,24 @@ Parameters:
         Type: String
         AllowedPattern: "^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]+$"
 
+    MaximumAccountSpend:
+        Description: The maximum configurable monthly spend, in USD, of created accounts before they are automatically deleted - or set to "0" to disable spend tracking
+        Type: String
+        Default: "100"
+        AllowedPattern: "^[0-9]+(?:\\.[0-9]{2})?$"
+
     EmailSubjectCustomization:
         Description: The format of the forwarded emails
         Type: String
         Default: "{subject} | From: {from} | Acct ID: {accountid} | Acct Email: {accountemail}"
+
+    RootEmailsToUser:
+        Description: If true, root e-mails will be sent to the user who created the account, otherwise they will be sent to the master e-mail address
+        Type: String
+        Default: "true"
+        AllowedValues:
+          - "true"
+          - "false"
 
     DomainName:
         Description: The domain name (or subdomain) which is used for all account root email addresses
@@ -147,6 +161,7 @@ Metadata:
               - DomainName
               - HostedZoneId
               - EmailSubjectCustomization
+              - RootEmailsToUser
           - Label: 
                 default: "Billing Credit Card"
             Parameters: 
@@ -164,6 +179,7 @@ Metadata:
             Parameters: 
               - 2CaptchaApiKey
               - AutomationUsername
+              - MaximumAccountSpend
           - Label: 
                 default: "Lambda Function"
             Parameters: 
@@ -203,6 +219,12 @@ Metadata:
                 default: "SSO Portal Alias"
             SSOManagerAppName: 
                 default: "SSO Account Manager Application Name"
+            AutomationUsername: 
+                default: "Automation IAM User Username"
+            RootEmailsToUser:
+                default: "Send Root E-mails to User"
+            MaximumAccountSpend:
+                default: "Maximum Monthly Spend Per Account"
 
 Conditions:
 
@@ -401,6 +423,8 @@ Resources:
                       - AccountDeletionEnabled
                       - !Ref AccountDeletionSNSTopic
                       - !Ref AWS::NoValue
+                    ROOT_EMAILS_TO_USER: !Ref RootEmailsToUser
+                    MAXIMUM_ACCOUNT_SPEND: !Ref MaximumAccountSpend
             Runtime: nodejs12.x
             MemorySize: 1024
             Timeout: 900
@@ -578,7 +602,7 @@ Resources:
                     Statement:
                       - Effect: Allow
                         Action:
-                          - '*' # TODO: Review
+                          - '*' # TODO: Fix. I'm sorry, I have no idea what magic the console is doing.
                         Resource: '*'
     
     AutomationCredentials:

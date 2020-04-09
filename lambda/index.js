@@ -1479,6 +1479,8 @@ async function triggerReset(page, event) {
 };
 
 async function addBillingMonitor(page, details) {
+    LOG.info("Adding billing monitor");
+
     let assumedrole = await sts.assumeRole({
         RoleArn: 'arn:aws:iam::' + details['accountid'] + ':role/OrganizationAccountAccessRole',
         RoleSessionName: 'AccountManagerAddBillingMonitor'
@@ -1527,10 +1529,18 @@ async function addBillingMonitor(page, details) {
         policyid = policydata.Policy.PolicySummary.Id;
     }
 
-    await organizations.attachPolicy({
-        PolicyId: policyid,
-        TargetId: details['accountid']
-    }).promise();
+    try {
+        await organizations.attachPolicy({
+            PolicyId: policyid,
+            TargetId: details['accountid']
+        }).promise();
+    } catch(err) {
+        if (err.code == "DuplicatePolicyAttachmentException") {
+            LOG.info("Skipping attach billing SCP, already attached");
+        } else {
+            throw err;
+        }
+    }
 
     let childcloudwatch = new AWS.CloudWatch({
         accessKeyId: assumedrole.Credentials.AccessKeyId,
@@ -1562,6 +1572,7 @@ async function addBillingMonitor(page, details) {
     }).promise();
 
     LOG.debug(alarm);
+    LOG.info("Completed adding billing monitor");
 }
 
 async function setSSOOwner(page, details) {
@@ -1988,6 +1999,10 @@ async function handleCreateAccountRequest(event) {
     let accountemail = decodeURIComponent(form['emailprefix'].replace(/\+/g, ' ')) + "@" + process.env.DOMAIN_NAME;
     let accountname = decodeURIComponent(form['accountname'].replace(/\+/g, ' '));
     let notes = decodeURIComponent(form['notes'].replace(/\ /g, '+'));
+    let maximumspend = null;
+    if (form['maximumspend']) {
+        maximumspend = decodeURIComponent(form['maximumspend']);
+    }
 
     if (!accountname.match(/^.{1,50}$/g)) {
         return {
@@ -2029,6 +2044,50 @@ async function handleCreateAccountRequest(event) {
                 'reason': 'The notes field can have up to 256 characters (valid characters: a-z, A-Z, 0-9, and . : = @ _ / - <space> )'
             })
         };
+    }
+
+    if (maximumspend) {
+        if (!maximumspend.match(/^[0-9]+(?:\.[0-9]{2})?$/g)) {
+            return {
+                "statusCode": 400,
+                "isBase64Encoded": false,
+                "headers": {
+                    "Content-Type": "application/json"
+                },
+                "body": JSON.stringify({
+                    'createAccountSuccess': false,
+                    'reason': 'The maximum spend field must be a number'
+                })
+            };
+        }
+        
+        maximumspend = parseFloat(maximumspend);
+        if (maximumspend <= 0) {
+            return {
+                "statusCode": 400,
+                "isBase64Encoded": false,
+                "headers": {
+                    "Content-Type": "application/json"
+                },
+                "body": JSON.stringify({
+                    'createAccountSuccess': false,
+                    'reason': 'The maximum spend field must be greater than zero'
+                })
+            };
+        }
+        if (maximumspend > parseFloat(process.env.MAXIMUM_ACCOUNT_SPEND)) {
+            return {
+                "statusCode": 400,
+                "isBase64Encoded": false,
+                "headers": {
+                    "Content-Type": "application/json"
+                },
+                "body": JSON.stringify({
+                    'createAccountSuccess': false,
+                    'reason': 'The maximum spend field must not be greater than ' + process.env.MAXIMUM_ACCOUNT_SPEND
+                })
+            };
+        }
     }
 
     let createaccountop = await organizations.createAccount({
@@ -2088,13 +2147,25 @@ async function handleCreateAccountRequest(event) {
         tags.push({
             Key: "Notes",
             Value: notes
-        })
+        });
     }
     if (form['shareaccount'] && form['shareaccount'] == "on") {
         tags.push({
             Key: "SharedWithOrg",
             Value: "true"
-        })
+        });
+    }
+    if (process.env.ROOT_EMAILS_TO_USER == "true") {
+        tags.push({
+            Key: "AccountEmailForwardingAddress",
+            Value: user.email
+        });
+    }
+    if (maximumspend) {
+        tags.push({
+            Key: "BudgetThresholdBeforeDeletion",
+            Value: maximumspend.toString()
+        });
     }
 
     await organizations.tagResource({
@@ -2183,6 +2254,24 @@ function wrapHTML(user) {
                     An account name is required.
                 </div>
             </div>
+            ${(process.env.MAXIMUM_ACCOUNT_SPEND == "0") ? '' : `
+
+            <div class="mb-3">
+                <label for="accountname">Maximum Monthly Spend (USD)</label>
+                <div class="input-group">
+                    <div class="input-group-prepend">
+                        <span class="input-group-text">$</span>
+                    </div>
+                    <input type="text" class="form-control" id="maximumspend" name="maximumspend" value="${process.env.MAXIMUM_ACCOUNT_SPEND}" aria-describedby="maximumspendhelp" required>
+                    <small id="maximumspendhelp" class="form-text text-muted">
+                        Account will be automatically deleted when this threshold is reached.
+                    </small>
+                    <div class="invalid-feedback" style="width: 100%;">
+                    A maximum spend is required.
+                    </div>
+                </div>
+            </div>
+            `}
             
             <div class="mb-3">
                 <label for="notes">Notes <span class="text-muted">(Optional)</span></label>
