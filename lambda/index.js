@@ -1729,6 +1729,9 @@ async function addBillingMonitor(page, details) {
         }
     });
 
+    // TODO: handle OptIn error, TooManyRequestsException
+    await new Promise((resolve) => {setTimeout(resolve, 60000)});
+
     let childcloudwatch = new AWS.CloudWatch({
         accessKeyId: assumedrole.Credentials.AccessKeyId,
         secretAccessKey: assumedrole.Credentials.SecretAccessKey,
@@ -2183,7 +2186,7 @@ async function handleCreateAccountRequest(event) {
     let accountemail = decodeURIComponent(form['emailprefix'].replace(/\+/g, ' ')) + "@" + process.env.DOMAIN_NAME;
     let accountname = decodeURIComponent(form['accountname'].replace(/\+/g, ' '));
     let notes = decodeURIComponent(form['notes'].replace(/\ /g, '+'));
-    let maximumspend = null;
+    let maximumspend = "";
     if (form['maximumspend']) {
         maximumspend = decodeURIComponent(form['maximumspend']);
     }
@@ -2230,7 +2233,7 @@ async function handleCreateAccountRequest(event) {
         };
     }
 
-    if (maximumspend) {
+    if (process.env.MAXIMUM_ACCOUNT_SPEND != "0") {
         if (!maximumspend.match(/^[0-9]+(?:\.[0-9]{2})?$/g)) {
             return {
                 "statusCode": 400,
@@ -2281,7 +2284,10 @@ async function handleCreateAccountRequest(event) {
         RoleName: 'OrganizationAccountAccessRole'
     }).promise();
 
+    LOG.debug("Created account, waiting for state");
+
     while (createaccountop.CreateAccountStatus.State == "IN_PROGRESS") {
+        LOG.debug("Account creation still in progress...");
         await new Promise((resolve) => {setTimeout(resolve, 2000)});
 
         createaccountop = await organizations.describeCreateAccountStatus({
@@ -2290,6 +2296,9 @@ async function handleCreateAccountRequest(event) {
     }
 
     if (createaccountop.CreateAccountStatus.State != "SUCCEEDED") {
+        LOG.debug("Account creation failure");
+        LOG.debug(createaccountop);
+
         let reason = 'The account could not be created for an unknown reason';
         if (createaccountop.CreateAccountStatus.FailureReason == "ACCOUNT_LIMIT_EXCEEDED") {
             reason = 'The account could not be created because the Organizational limit has been exceeded';
@@ -2829,7 +2838,7 @@ exports.handler = async (event, context) => {
                 let number = await claimnumber(page, {
                     'Domain': domain
                 });
-                LOG.info("Registered phone number: " + number);
+                LOG.info("Registered phone number: " + number['PhoneNumber']);
                 
                 let variables = {};
 
