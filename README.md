@@ -82,7 +82,7 @@ You can also override the format of the subject line for forwarded e-mails. Duri
 
 ### Account Deletion (Manual Method)
 
-In order to elect to delete an account without the use of the SSO account manager, simply tag an account within the Organizations console with the following (case not sensitive):
+In order to elect to delete an account without the use of the SSO Account Manager, simply tag an account within the Organizations console with the following (case not sensitive):
 
 *Tag Key:* **Delete**
 
