@@ -1119,8 +1119,6 @@ async function handleEmailInbound(page, event) {
             return;
         }
 
-        LOG.debug(body);
-
         let filteredbody = body.replace(/=3D/g, '=').replace(/=\r\n/g, '');
 
         let start = filteredbody.indexOf("https://signin.aws.amazon.com/resetpassword");
@@ -1293,7 +1291,12 @@ async function handleEmailInbound(page, event) {
                     
                     await debugScreenshot(page);
 
-                    await page.click('#verification-complete-button');
+                    try {
+                        await page.click('#verification-complete-button');
+                    } catch(err) {
+                        LOG.error("Could not confirm phone number verification - possible error in DIVA system");
+                        throw err;
+                    }
 
                     await page.waitFor(3000);
                     
@@ -1529,18 +1532,30 @@ async function addBillingMonitor(page, details) {
         policyid = policydata.Policy.PolicySummary.Id;
     }
 
-    try {
-        await organizations.attachPolicy({
-            PolicyId: policyid,
-            TargetId: details['accountid']
-        }).promise();
-    } catch(err) {
+    await organizations.attachPolicy({
+        PolicyId: policyid,
+        TargetId: details['accountid']
+    }).promise().catch(err => {
         if (err.code == "DuplicatePolicyAttachmentException") {
             LOG.info("Skipping attach billing SCP, already attached");
         } else {
             throw err;
         }
-    }
+    });
+
+    /*
+    "route53domains:*",
+    "ec2:ModifyReservedInstances",
+    "ec2:PurchaseHostReservation",
+    "ec2:PurchaseReservedInstancesOffering",
+    "ec2:PurchaseScheduledInstances",
+    "rds:PurchaseReservedDBInstancesOffering",
+    "dynamodb:PurchaseReservedCapacityOfferings",
+    "s3:PutObjectRetention",
+    "s3:PutObjectLegalHold",
+    "s3:BypassGovernanceRetention",
+    "s3:PutBucketObjectLockConfiguration"
+    */
 
     let childcloudwatch = new AWS.CloudWatch({
         accessKeyId: assumedrole.Credentials.AccessKeyId,
@@ -1927,12 +1942,9 @@ async function handleDeleteAccountRequest(event) {
 
     let user = await getUserBySAML(form['SAMLResponse']);
 
-    let account = null;
-    try {
-        account = await organizations.describeAccount({
-            AccountId: form['accountid']
-        }).promise();
-    } catch(err) {
+    let account = await organizations.describeAccount({
+        AccountId: form['accountid']
+    }).promise().catch(err => {
         LOG.debug(err);
 
         return {
@@ -1945,7 +1957,7 @@ async function handleDeleteAccountRequest(event) {
                 'deleteAccountSuccess': false
             })
         };
-    }
+    });
     
     let tagdata = await organizations.listTagsForResource({
         ResourceId: account.Account.Id
@@ -2719,6 +2731,7 @@ exports.handler = async (event, context) => {
     } else if (event.routeKey == "POST /") {
         try {
             let resp = await handleSAMLResponse(event);
+
             return resp;
         } catch(err) {
             LOG.error(err);

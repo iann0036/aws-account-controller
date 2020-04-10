@@ -8,7 +8,7 @@
     "chrome-aws-lambda": "^2.1.1",
     "dateformat": "^3.0.3",
     "https": "^1.0.0",
-    "internet-message": "^1.0.0",
+    "internet-message": "github:iann0036/js-internet-message",
     "mailparser-mit": "^1.0.0",
     "puppeteer-core": "^2.1.1",
     "request": "^2.88.0",
