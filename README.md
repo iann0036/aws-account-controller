@@ -2,7 +2,9 @@
 
 > Manage the creation and deletion of sandbox-style accounts.
 
-[![Account Manager Application](assets/accountmanager.png)](assets/accountmanager.png)
+[<img src="https://github.com/iann0036/aws-account-controller/raw/master/assets/accountmanager.png" alt="Account Manager Application" style="max-width:600px;">](assets/accountmanager.png)
+
+
 
 > :exclamation: **PLEASE READ [THE CAVEATS](https://onecloudplease.com/blog/automating-aws-account-deletion) OF THIS SOLUTION BEFORE CONTINUING**
 
