@@ -12,7 +12,7 @@ The following is required before proceeding:
 
 * An AWS master account that has Organizations enabled
 * A credit card which will be used to apply payment information to terminated accounts
-* A [2captcha](https://2captcha.com/) account that is sufficiently topped-up with credit ($10 would be more than enough)
+* A [2Captcha](https://2captcha.com/) account that is sufficiently topped-up with credit ($10 would be more than enough)
 * A preferred master e-mail address to receive account correspondence to
 * A registered domain name or subdomain, which is publicly accessible
 * SES to have the master e-mail address be verified
@@ -32,7 +32,8 @@ Click the above link to deploy the stack to your environment. This stack creates
 * An S3 bucket for storing raw e-mail content, with a short term expiry
 * An SES Receipt Rule Set, which is automatically promoted to be default
 * An event rule that triggers Lambda execution when an organizations account is tagged for deletion (if enabled)
-* An IAM user with a login profile, used to deploy a Connect instance
+* An API Gateway to service the SSO Account Manager application (if enabled)
+* An IAM user with a login profile, used to deploy a Connect instance and register the SSO application
 
 If you prefer, you can also manually upsert the [template.yml](https://github.com/iann0036/aws-account-controller/blob/master/template.yml) stack from source.
 
@@ -58,13 +59,17 @@ The account manager (as seen at the top of this page) is a custom application th
 
 The application will ensure only accounts owned by the creator are shown, unless the creator explicitly shares the account with other users. Accounts which are created can optionally require a monthly budget to be set, which if exceeded will automatically trigger a deletion of the account (the maximum budget is an option during installation).
 
+During installation, if you select `true` for the `Deny Subscription Calls` parameter, a number of calls will be denied to created accounts via an SCP such as calls to create reserved instances, register domain names or apply S3 object locks.
+
+You can also elect not to include the SSO functionality by selecting `false` during installation for the `Enable Account Creation Functionality` parameter.
+
 ### E-mail Forwarding
 
 E-mails that are targetting the addresses of the root account will be forwarded by default to the master e-mail address.
 
 [![Email Forwarding](assets/email.png)](assets/email.png)
 
-You can specify a different destination per account by placing a tag with the key `AccountEmailForwardingAddress` on the account in Organizations.
+You can specify a different destination per account by placing a tag with the key `AccountEmailForwardingAddress` on the account in Organizations. This is set to the SSO user automatically if the account was created with the SSO Account Manager application and the `Send Root E-mails to User` parameter was set to `true` during installation.
 
 You can also override the format of the subject line for forwarded e-mails. During installation, you can change the subject line to any string with the following variables available for substitution:
 
@@ -97,6 +102,8 @@ Once tagged, a process will perform the following actions on your behalf:
 The above process takes approximately 4 minutes.
 
 If the account more than 7 days old, the process completely remove the account from Organizations. If the account is less than 7 days old, a tag with the key `AccountDeletionTime` will be set with the timestamp the account was deleted at and another tag with the key `ScheduledRemovalTime` will be set with the timestamp the account will be removed from Organizations.
+
+You can also elect not to include the deletion functionality by selecting `false` during installation to the `Enable Account Deletion Functionality` parameter.
 
 ## Architecture
 
