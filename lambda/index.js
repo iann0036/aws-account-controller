@@ -240,6 +240,16 @@ async function createssoapp(page, properties) {
 
     await debugScreenshot(page);
 
+    const cookies = await page.cookies();
+
+    let cookie = "";
+    cookies.forEach(cookieitem => {
+        cookie += cookieitem['name'] + "=" + cookieitem['value'] + "; ";
+    });
+    cookie = cookie.substr(0, cookie.length - 2);
+
+    let csrftoken = await page.$eval('head > meta[name="awsc-csrf-token"]', element => element.content);
+
     let accountmanagergroupresult = await rp({
         uri: 'https://console.aws.amazon.com/singlesignon/api/userpool',
         method: 'POST',
@@ -302,7 +312,7 @@ async function createssoapp(page, properties) {
             }
         });
 
-        groupid = creategroupresult.Group.GroupId;
+        groupid = JSON.parse(creategroupresult).Group.GroupId;
     } else {
         groupid = accountmanagergroups[0].GroupId;
     }
@@ -379,6 +389,7 @@ async function createssoapp(page, properties) {
     }).promise();
 
     // map attributes
+    LOG.debug("Started mapping attributes");
 
     await debugScreenshot(page);
 
@@ -420,19 +431,39 @@ async function createssoapp(page, properties) {
 
     await debugScreenshot(page);
 
+    await page.click('awsui-button[click="samlSection.saveChanges()"]'); // Save changes
+
+    LOG.debug("Finished mapping attributes, mapping app to group");
+
+    await page.waitFor(5000);
+
     await paneltabs[2].click(); // users and group mappings
     await page.waitFor(2000);
+
+    await debugScreenshot(page);
 
     await page.click('.assign-users-button');
     await page.waitFor(5000);
 
+    await debugScreenshot(page);
+
     let paneltabs2 = await page.$$('.awsui-tabs-container > li');
-    await paneltabs2[1].click();
+    await paneltabs2.pop().click(); // last tab
     await page.waitFor(5000);
 
-    //
+    await debugScreenshot(page);
 
-    await page.click('awsui-button[click="samlSection.saveChanges()"]'); // Save changes
+    let groupsearch = await page.$('awsui-textfield[ng-model="table.controlValues.search"] > input');
+    await groupsearch.press('Backspace');
+    await groupsearch.type('AccountManagerUsers', { delay: 100 });
+    await page.waitFor(5000);
+
+    await debugScreenshot(page);
+
+    await page.click('div.group-name > div.selection > div.checkbox > awsui-checkbox');
+    await page.waitFor(200);
+    
+    await page.click('.assign'); // assign users button
 
     await page.waitFor(5000);
 

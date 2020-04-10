@@ -11,7 +11,7 @@
 The following is required before proceeding:
 
 * An AWS master account that has Organizations and SSO enabled
-* A credit card which will be used to apply payment information to terminated accounts
+* A credit card which will be used to apply payment information to terminated accounts (reloadable debit cards work also)
 * A [2Captcha](https://2captcha.com/) account that is sufficiently topped-up with credit ($10 would be more than enough)
 * A preferred master e-mail address to receive account correspondence to
 * A registered domain name or subdomain, which is publicly accessible
