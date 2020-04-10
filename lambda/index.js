@@ -1481,6 +1481,80 @@ async function triggerReset(page, event) {
     await page.waitFor(2000);
 };
 
+async function addSubscriptionsSCP(details) {
+    LOG.info("Adding subscriptions SCP");
+
+    let policyid = null;
+    let policiesdata = await organizations.listPolicies({
+        Filter: 'SERVICE_CONTROL_POLICY'
+    }).promise();
+    let policies = policiesdata.Policies;
+
+    while (policiesdata.NextToken) {
+        policiesdata = await organizations.listPolicies({
+            Filter: 'SERVICE_CONTROL_POLICY',
+            NextToken: policiesdata.NextToken
+        }).promise();
+        policies.concat(policiesdata.Policies);
+    }
+
+    policyid = null;
+
+    for (const policy of policies) {
+        if (policy.Name == "AccountManagerDenySubscriptionCalls") {
+            policyid = policy.Id;
+        }
+    }
+    
+    if (!policyid) {
+        policydata = await organizations.createPolicy({
+            Content: JSON.stringify({
+                Version: "2012-10-17",
+                Statement: {
+                    Effect: "Deny",
+                    Action: [
+                        "route53domains:RegisterDomain",
+                        "route53domains:RenewDomain",
+                        "route53domains:TransferDomain",
+                        "ec2:ModifyReservedInstances",
+                        "ec2:PurchaseHostReservation",
+                        "ec2:PurchaseReservedInstancesOffering",
+                        "ec2:PurchaseScheduledInstances",
+                        "rds:PurchaseReservedDBInstancesOffering",
+                        "dynamodb:PurchaseReservedCapacityOfferings",
+                        "s3:PutObjectRetention",
+                        "s3:PutObjectLegalHold",
+                        "s3:BypassGovernanceRetention",
+                        "s3:PutBucketObjectLockConfiguration"
+                    ],
+                    Resource: "*",
+                    Condition: {
+                        StringNotLike: {
+                            'aws:PrincipalArn': 'arn:aws:iam::*:role/OrganizationAccountAccessRole'
+                        }
+                    }
+                }
+            }),
+            Description: 'Used to restrict access to create long-term subscriptions',
+            Name: 'AccountManagerDenySubscriptionCalls',
+            Type: 'SERVICE_CONTROL_POLICY'
+        }).promise();
+        
+        policyid = policydata.Policy.PolicySummary.Id;
+    }
+
+    await organizations.attachPolicy({
+        PolicyId: policyid,
+        TargetId: details['accountid']
+    }).promise().catch(err => {
+        if (err.code == "DuplicatePolicyAttachmentException") {
+            LOG.info("Skipping attach subscription SCP, already attached");
+        } else {
+            throw err;
+        }
+    });
+}
+
 async function addBillingMonitor(page, details) {
     LOG.info("Adding billing monitor");
 
@@ -1542,62 +1616,6 @@ async function addBillingMonitor(page, details) {
             throw err;
         }
     });
-
-    if (process.env.DENY_SUBSCRIPTION_CALLS == "true") {
-        policyid = null;
-
-        for (const policy of policies) {
-            if (policy.Name == "AccountManagerDenySubscriptionCalls") {
-                policyid = policy.Id;
-            }
-        }
-        
-        if (!policyid) {
-            policydata = await organizations.createPolicy({
-                Content: JSON.stringify({
-                    Version: "2012-10-17",
-                    Statement: {
-                        Effect: "Deny",
-                        Action: [
-                            "route53domains:*",
-                            "ec2:ModifyReservedInstances",
-                            "ec2:PurchaseHostReservation",
-                            "ec2:PurchaseReservedInstancesOffering",
-                            "ec2:PurchaseScheduledInstances",
-                            "rds:PurchaseReservedDBInstancesOffering",
-                            "dynamodb:PurchaseReservedCapacityOfferings",
-                            "s3:PutObjectRetention",
-                            "s3:PutObjectLegalHold",
-                            "s3:BypassGovernanceRetention",
-                            "s3:PutBucketObjectLockConfiguration"
-                        ],
-                        Resource: "*",
-                        Condition: {
-                            StringNotLike: {
-                                'aws:PrincipalArn': 'arn:aws:iam::*:role/OrganizationAccountAccessRole'
-                            }
-                        }
-                    }
-                }),
-                Description: 'Used to restrict access to create long-term subscriptions',
-                Name: 'AccountManagerDenySubscriptionCalls',
-                Type: 'SERVICE_CONTROL_POLICY'
-            }).promise();
-            
-            policyid = policydata.Policy.PolicySummary.Id;
-        }
-    
-        await organizations.attachPolicy({
-            PolicyId: policyid,
-            TargetId: details['accountid']
-        }).promise().catch(err => {
-            if (err.code == "DuplicatePolicyAttachmentException") {
-                LOG.info("Skipping attach subscription SCP, already attached");
-            } else {
-                throw err;
-            }
-        });
-    }
 
     let childcloudwatch = new AWS.CloudWatch({
         accessKeyId: assumedrole.Credentials.AccessKeyId,
@@ -2577,6 +2595,12 @@ exports.handler = async (event, context) => {
             let page = await browser.newPage();
 
             await login(page);
+
+            if (process.env.DENY_SUBSCRIPTION_CALLS) {
+                await addSubscriptionsSCP({
+                    'accountid': event.detail.requestParameters.resourceId
+                });
+            }
 
             if (budgetthresholdbeforedeletion) {
                 await addBillingMonitor(page, {
