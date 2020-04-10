@@ -1352,7 +1352,7 @@ async function handleEmailInbound(page, event) {
                     try {
                         await page.click('#verification-complete-button');
                     } catch(err) {
-                        LOG.error("Could not confirm phone number verification - possible error in DIVA system");
+                        LOG.error("Could not confirm phone number verification - possible error in DIVA system or credit card");
                         throw err;
                     }
 
