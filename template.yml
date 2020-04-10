@@ -44,6 +44,14 @@ Parameters:
           - "true"
           - "false"
 
+    DenySubscriptionCalls:
+        Description: Denies the capability to make subscription-based calls in new accounts, like reserved instances, via an SCP
+        Type: String
+        Default: "true"
+        AllowedValues:
+          - "true"
+          - "false"
+
     DomainName:
         Description: The domain name (or subdomain) which is used for all account root email addresses
         Type: String
@@ -180,6 +188,7 @@ Metadata:
               - 2CaptchaApiKey
               - AutomationUsername
               - MaximumAccountSpend
+              - DenySubscriptionCalls
           - Label: 
                 default: "Lambda Function"
             Parameters: 
@@ -225,6 +234,8 @@ Metadata:
                 default: "Send Root E-mails to User"
             MaximumAccountSpend:
                 default: "Maximum Monthly Spend Per Account"
+            DenySubscriptionCalls:
+                default: "Deny Subscription Calls"
 
 Conditions:
 
@@ -425,6 +436,7 @@ Resources:
                       - !Ref AWS::NoValue
                     ROOT_EMAILS_TO_USER: !Ref RootEmailsToUser
                     MAXIMUM_ACCOUNT_SPEND: !Ref MaximumAccountSpend
+                    DENY_SUBSCRIPTION_CALLS: !Ref DenySubscriptionCalls
             Runtime: nodejs12.x
             MemorySize: 1024
             Timeout: 900
