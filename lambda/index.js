@@ -2883,20 +2883,17 @@ exports.handler = async (event, context) => {
 
             if (event.RequestType == "Create") {
                 await createssoapp(page, {
-                    'SSOPortalAlias': event.ResourceProperties.SSOPortalAlias,
                     'SSOManagerAppName': event.ResourceProperties.SSOManagerAppName,
                     'APIGatewayEndpoint': event.ResourceProperties.APIGatewayEndpoint
                 });
             } else if (event.RequestType == "Delete") {
                 await deletessoapp(page, {
-                    'SSOPortalAlias': event.ResourceProperties.SSOPortalAlias,
                     'SSOManagerAppName': event.ResourceProperties.SSOManagerAppName,
                     'APIGatewayEndpoint': event.ResourceProperties.APIGatewayEndpoint
                 });
             }
 
             await sendcfnresponse(event, context, "SUCCESS", {
-                'SSOPortalAlias': event.ResourceProperties.SSOPortalAlias,
                 "SSOManagerAppName": event.ResourceProperties.SSOManagerAppName,
                 'APIGatewayEndpoint': event.ResourceProperties.APIGatewayEndpoint
             }, "SSOManager");

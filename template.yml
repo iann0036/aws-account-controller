@@ -21,7 +21,7 @@ Parameters:
           - "false"
 
     MasterEmail:
-        Description: The email address which will receive all root account correspondence
+        Description: The email address which will receive all root account correspondence (this should NOT be an address of your master domain/subdomain)
         Type: String
         AllowedPattern: "^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]+$"
 
@@ -143,11 +143,6 @@ Parameters:
         Type: String
         Default: ''
 
-    SSOPortalAlias:
-        Description: The alias of the SSO portal (leave blank to use existing SSO)
-        Type: String
-        Default: ''
-
     SSOManagerAppName:
         Description: The name of the SSO application used to manage accounts
         Type: String
@@ -180,7 +175,6 @@ Metadata:
           - Label: 
                 default: "SSO Settings"
             Parameters: 
-              - SSOPortalAlias
               - SSOManagerAppName
           - Label: 
                 default: "Other Settings"
@@ -224,8 +218,6 @@ Metadata:
                 default: "Enable Account Creation Functionality"
             AccountDeletionFunctionality: 
                 default: "Enable Account Deletion Functionality"
-            SSOPortalAlias: 
-                default: "SSO Portal Alias"
             SSOManagerAppName: 
                 default: "SSO Account Manager Application Name"
             AutomationUsername: 
@@ -663,7 +655,6 @@ Resources:
         Type: Custom::SSOSetup
         Properties: 
             ServiceToken: !GetAtt LambdaFunction.Arn
-            SSOPortalAlias: !Ref SSOPortalAlias
             SSOManagerAppName: !Ref SSOManagerAppName
             APIGatewayEndpoint: !Sub "https://${SAMLHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
 
