@@ -11,10 +11,12 @@
 The following is required before proceeding:
 
 * An AWS master account that has Organizations enabled
-* A registered domain name or subdomain, which is publicly accessible
 * A credit card which will be used to apply payment information to terminated accounts
 * A [2captcha](https://2captcha.com/) account that is sufficiently topped-up with credit ($10 would be more than enough)
 * A preferred master e-mail address to receive account correspondence to
+* A registered domain name or subdomain, which is publicly accessible
+* SES to have the master e-mail address be verified
+* SES to have either have the domain/subdomain also verified or have SES out of sandbox mode
 
 ## Installation
 
@@ -36,7 +38,7 @@ If you prefer, you can also manually upsert the [template.yml](https://github.co
 
 If you chose to have the stack create a hosted zone for the account root e-mails instead of you bringing your own, you should ensure the nameservers of the new zone are associated with an accessible domains (automatic if the domain was created within Route 53).
 
-You should also ensure that SES verifies the master e-mail address as it is used for sending and either verifies the destination domain or is released from sandbox mode. Also make sure SES sending service limits are appropriate for the amount of e-mails you intend to receive.
+Also make sure SES sending service limits are appropriate for the amount of e-mails you intend to receive.
 
 Currently, the only tested region is `us-east-1`. The stack deploy time is approximately 8 minutes.
 
