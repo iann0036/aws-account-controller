@@ -93,6 +93,8 @@ const sendcfnresponse = async (event, context, responseStatus, responseData, phy
     });
 }
 
+
+
 const solveCaptcha = async (page, url) => {
     var captchaResult = "";
 
@@ -198,6 +200,36 @@ const debugScreenshot = async (page) => {
         });
     }
 };
+
+async function retryWrapper(awspromise) {
+    return new Promise((resolve, reject) => {
+        awspromise.then(data => {
+            resolve(data);
+        }).catch(err => {
+            if (err.code == "TooManyRequestsException") {
+                LOG.debug("Got TooManyRequestsException, sleeping 2s");
+                setTimeout(() => {
+                    retryWrapper(awspromise).then(data => {
+                        resolve(data);
+                    }).catch(err => {
+                        reject(err);
+                    });
+                }, 2000); // 2s
+            } else if (err.code == "OptInRequired") {
+                LOG.debug("Got OptInRequired, sleeping 20s");
+                setTimeout(() => {
+                    retryWrapper(awspromise).then(data => {
+                        resolve(data);
+                    }).catch(err => {
+                        reject(err);
+                    });
+                }, 20000); // 20s
+            } else {
+                reject(err);
+            }
+        });
+    });
+}
 
 async function login(page) {
     let secretsmanagerresponse = await secretsmanager.getSecretValue({
@@ -1137,14 +1169,14 @@ async function handleEmailInbound(page, event) {
             email = emailmatches[1];
         }
 
-        data = await organizations.listAccounts({
+        data = await retryWrapper(organizations.listAccounts({
             // no params
-        }).promise();
+        }).promise());
         let accounts = data.Accounts;
         while (data.NextToken) {
-            data = await organizations.listAccounts({
+            data = await retryWrapper(organizations.listAccounts({
                 NextToken: data.NextToken
-            }).promise();
+            }).promise());
     
             accounts = accounts.concat(data.Accounts);
         }
@@ -1158,9 +1190,9 @@ async function handleEmailInbound(page, event) {
         var accountemailforwardingaddress = null;
 
         if (account) {
-            let orgtags = await organizations.listTagsForResource({ // TODO: paginate
+            let orgtags = await retryWrapper(organizations.listTagsForResource({ // TODO: paginate
                 ResourceId: account.Id
-            }).promise();
+            }).promise());
 
             orgtags.Tags.forEach(tag => {
                 if (tag.Key.toLowerCase() == "delete" && tag.Value.toLowerCase() == "true") {
@@ -1409,13 +1441,13 @@ async function handleEmailInbound(page, event) {
 
                         await debugScreenshot(page);
 
-                        await organizations.tagResource({
+                        await retryWrapper(organizations.tagResource({
                             ResourceId: account.Id,
                             Tags: [{
                                 Key: "AccountDeletionTime",
                                 Value: (new Date()).toISOString()
                             }]
-                        }).promise();
+                        }).promise());
                     }
 
                     await removeAccountFromOrg(account);
@@ -1489,9 +1521,9 @@ async function removeAccountFromOrg(account) {
     var threshold = new Date(account.JoinedTimestamp);
     threshold.setDate(threshold.getDate() + 7); // 7 days
     if (now > threshold) {
-        await organizations.removeAccountFromOrganization({
+        await retryWrapper(organizations.removeAccountFromOrganization({
             AccountId: account.Id
-        }).promise();
+        }).promise());
 
         LOG.info("Removed account from Org");
 
@@ -1520,13 +1552,13 @@ async function removeAccountFromOrg(account) {
             }]
         }).promise();
 
-        await organizations.tagResource({
+        await retryWrapper(organizations.tagResource({
             ResourceId: account.Id,
             Tags: [{
                 Key: "ScheduledRemovalTime",
                 Value: threshold.toISOString()
             }]
-        }).promise();
+        }).promise());
 
         LOG.info("Scheduled removal for later");
     }
@@ -1595,16 +1627,16 @@ async function addSubscriptionsSCP(details) {
     LOG.info("Adding subscriptions SCP");
 
     let policyid = null;
-    let policiesdata = await organizations.listPolicies({
+    let policiesdata = await retryWrapper(organizations.listPolicies({
         Filter: 'SERVICE_CONTROL_POLICY'
-    }).promise();
+    }).promise());
     let policies = policiesdata.Policies;
 
     while (policiesdata.NextToken) {
-        policiesdata = await organizations.listPolicies({
+        policiesdata = await retryWrapper(organizations.listPolicies({
             Filter: 'SERVICE_CONTROL_POLICY',
             NextToken: policiesdata.NextToken
-        }).promise();
+        }).promise());
         policies.concat(policiesdata.Policies);
     }
 
@@ -1617,7 +1649,7 @@ async function addSubscriptionsSCP(details) {
     }
     
     if (!policyid) {
-        policydata = await organizations.createPolicy({
+        policydata = await retryWrapper(organizations.createPolicy({
             Content: JSON.stringify({
                 Version: "2012-10-17",
                 Statement: {
@@ -1650,15 +1682,15 @@ async function addSubscriptionsSCP(details) {
             Description: 'Used to restrict access to create long-term subscriptions',
             Name: 'AccountManagerDenySubscriptionCalls',
             Type: 'SERVICE_CONTROL_POLICY'
-        }).promise();
+        }).promise());
         
         policyid = policydata.Policy.PolicySummary.Id;
     }
 
-    await organizations.attachPolicy({
+    await retryWrapper(organizations.attachPolicy({
         PolicyId: policyid,
         TargetId: details['accountid']
-    }).promise().catch(err => {
+    }).promise()).catch(err => {
         if (err.code == "DuplicatePolicyAttachmentException") {
             LOG.info("Skipping attach subscription SCP, already attached");
         } else {
@@ -1676,16 +1708,16 @@ async function addBillingMonitor(page, details) {
     }).promise();
 
     let policyid = null;
-    let policiesdata = await organizations.listPolicies({
+    let policiesdata = await retryWrapper(listPolicies({
         Filter: 'SERVICE_CONTROL_POLICY'
-    }).promise();
+    }).promise());
     let policies = policiesdata.Policies;
 
     while (policiesdata.NextToken) {
-        policiesdata = await organizations.listPolicies({
+        policiesdata = await retryWrapper(organizations.listPolicies({
             Filter: 'SERVICE_CONTROL_POLICY',
             NextToken: policiesdata.NextToken
-        }).promise();
+        }).promise());
         policies.concat(policiesdata.Policies);
     }
 
@@ -1696,7 +1728,7 @@ async function addBillingMonitor(page, details) {
     }
     
     if (!policyid) {
-        policydata = await organizations.createPolicy({
+        policydata = await retryWrapper(createPolicy({
             Content: JSON.stringify({
                 Version: "2012-10-17",
                 Statement: {
@@ -1713,15 +1745,15 @@ async function addBillingMonitor(page, details) {
             Description: 'Used to restrict access to the billing alarm',
             Name: 'AccountManagerDenyBillingAlarmAccess',
             Type: 'SERVICE_CONTROL_POLICY'
-        }).promise();
+        }).promise());
         
         policyid = policydata.Policy.PolicySummary.Id;
     }
 
-    await organizations.attachPolicy({
+    await retryWrapper(organizations.attachPolicy({
         PolicyId: policyid,
         TargetId: details['accountid']
-    }).promise().catch(err => {
+    }).promise()).catch(err => {
         if (err.code == "DuplicatePolicyAttachmentException") {
             LOG.info("Skipping attach billing SCP, already attached");
         } else {
@@ -1729,16 +1761,13 @@ async function addBillingMonitor(page, details) {
         }
     });
 
-    // TODO: handle OptIn error, TooManyRequestsException
-    await new Promise((resolve) => {setTimeout(resolve, 60000)});
-
     let childcloudwatch = new AWS.CloudWatch({
         accessKeyId: assumedrole.Credentials.AccessKeyId,
         secretAccessKey: assumedrole.Credentials.SecretAccessKey,
         sessionToken: assumedrole.Credentials.SessionToken
     });
 
-    let alarm = await childcloudwatch.putMetricAlarm({
+    let alarm = await retryWrapper(childcloudwatch.putMetricAlarm({
         AlarmName: 'AccountManagerDeletionBudgetMonitor',
         ComparisonOperator: 'GreaterThanThreshold',
         EvaluationPeriods: 1,
@@ -1759,7 +1788,7 @@ async function addBillingMonitor(page, details) {
         Threshold: details['budgetthresholdbeforedeletion'],
         TreatMissingData: 'ignore',
         Unit: 'None'
-    }).promise();
+    }).promise()); // subject to OptInRequired
 
     LOG.debug(alarm);
     LOG.info("Completed adding billing monitor");
@@ -1909,13 +1938,13 @@ async function setSSOOwner(page, details) {
 
     await debugScreenshot(page);
 
-    await organizations.tagResource({
+    await retryWrapper(organizations.tagResource({
         ResourceId: details['accountid'],
         Tags: [{
             Key: "SSOCreationComplete",
             Value: "true"
         }]
-    }).promise();
+    }).promise());
 }
 
 async function decodeSAMLResponse(sp, idp, samlresponse) {
@@ -2015,22 +2044,22 @@ async function handleGetAccounts(event) {
 
     let useraccounts = [];
 
-    let data = await organizations.listAccounts({
+    let data = await retryWrapper(organizations.listAccounts({
         // no params
-    }).promise();
+    }).promise());
     let accounts = data.Accounts;
     while (data.NextToken) {
-        let moreaccounts = await organizations.listAccounts({
+        let moreaccounts = await retryWrapper(organizations.listAccounts({
             NextToken: data.NextToken
-        }).promise();
+        }).promise());
 
         accounts = accounts.concat(moreaccounts.Accounts);
     }
 
     for (const account of accounts) {
-        let tags = await organizations.listTagsForResource({ // TODO: paginate
+        let tags = await retryWrapper(organizations.listTagsForResource({ // TODO: paginate
             ResourceId: account.Id
-        }).promise();
+        }).promise());
 
         let shouldAddToUserAccountsList = false;
         let isdeleted = false;
@@ -2090,19 +2119,19 @@ async function processSnsDeleteAccount(event) {
 
             let accountid = snsmessage.AWSAccountId;
 
-            let account = await organizations.describeAccount({
+            let account = await retryWrapper(organizations.describeAccount({
                 AccountId: accountid
-            }).promise();
+            }).promise());
 
             LOG.info("Deleting account " + accountid + " due to budget alert");
 
-            await organizations.tagResource({
+            await retryWrapper(organizations.tagResource({
                 ResourceId: account.Account.Id,
                 Tags: [{
                     Key: "Delete",
                     Value: "true"
                 }]
-            }).promise();
+            }).promise());
         }
     }
 }
@@ -2117,9 +2146,9 @@ async function handleDeleteAccountRequest(event) {
 
     let user = await getUserBySAML(form['SAMLResponse']);
 
-    let account = await organizations.describeAccount({
+    let account = await retryWrapper(organizations.describeAccount({
         AccountId: form['accountid']
-    }).promise().catch(err => {
+    }).promise()).catch(err => {
         LOG.debug(err);
 
         return {
@@ -2134,19 +2163,19 @@ async function handleDeleteAccountRequest(event) {
         };
     });
     
-    let tagdata = await organizations.listTagsForResource({
+    let tagdata = await retryWrapper(organizations.listTagsForResource({
         ResourceId: account.Account.Id
-    }).promise();
+    }).promise());
 
     for (const tag of tagdata.Tags) {
         if (tag.Key.toLowerCase() == "accountownerguid" && tag.Value == user.guid) {
-            await organizations.tagResource({
+            await retryWrapper(organizations.tagResource({
                 ResourceId: account.Account.Id,
                 Tags: [{
                     Key: "Delete",
                     Value: "true"
                 }]
-            }).promise();
+            }).promise());
 
             return {
                 "statusCode": 200,
@@ -2277,12 +2306,12 @@ async function handleCreateAccountRequest(event) {
         }
     }
 
-    let createaccountop = await organizations.createAccount({
+    let createaccountop = await retryWrapper(organizations.createAccount({
         AccountName: accountname, 
         Email: accountemail,
         IamUserAccessToBilling: 'ALLOW',
         RoleName: 'OrganizationAccountAccessRole'
-    }).promise();
+    }).promise());
 
     LOG.debug("Created account, waiting for state");
 
@@ -2290,9 +2319,9 @@ async function handleCreateAccountRequest(event) {
         LOG.debug("Account creation still in progress...");
         await new Promise((resolve) => {setTimeout(resolve, 2000)});
 
-        createaccountop = await organizations.describeCreateAccountStatus({
+        createaccountop = await retryWrapper(organizations.describeCreateAccountStatus({
             CreateAccountRequestId: createaccountop.CreateAccountStatus.Id
-        }).promise();
+        }).promise());
     }
 
     if (createaccountop.CreateAccountStatus.State != "SUCCEEDED") {
@@ -2361,10 +2390,10 @@ async function handleCreateAccountRequest(event) {
         });
     }
 
-    await organizations.tagResource({
+    await retryWrapper(organizations.tagResource({
         ResourceId: createaccountop.CreateAccountStatus.AccountId,
         Tags: tags
-    }).promise();
+    }).promise());
 
     return {
         "statusCode": 200,
@@ -2687,9 +2716,9 @@ exports.handler = async (event, context) => {
         });
 
         if (isdeletable && process.env.DELETION_FUNCTIONALITY_ENABLED == "true") {
-            let data = await organizations.describeAccount({
+            let data = await retryWrapper(organizations.describeAccount({
                 AccountId: event.detail.requestParameters.resourceId
-            }).promise();
+            }).promise());
 
             browser = await puppeteer.launch({
                 args: chromium.args,
