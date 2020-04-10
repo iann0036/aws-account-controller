@@ -2,7 +2,7 @@
 
 > Manage the creation and deletion of sandbox-style accounts.
 
-[![Architecture Diagram](assets/arch.svg)](assets/arch.svg)
+[![Account Manager Application](assets/accountmanager.png)](assets/accountmanager.png)
 
 > :exclamation: **PLEASE READ [THE CAVEATS](https://onecloudplease.com/blog/automating-aws-account-deletion) OF THIS SOLUTION BEFORE CONTINUING**
 
@@ -48,6 +48,14 @@ To remove this solution, ensure that both S3 buckets have their objects removed 
 
 In order for you to easily build upon this system, the system makes heavy use of tags for system automation and configuration.
 
+### SSO Account Manager
+
+The account manager (as seen at the top of this page) is a custom application that SSO users can access to create accounts or delete previously created accounts on-demand. The application is accessible via the users SSO dashboard:
+
+[![SSO Dashboard](assets/sso.png)](assets/sso.png)
+
+The application will ensure only accounts owned by the creator are shown, unless the creator explicitly shares the account with other users. Accounts which are created can optionally require a monthly budget to be set, which if exceeded will automatically trigger a deletion of the account (the maximum budget is an option during installation).
+
 ### E-mail Forwarding
 
 E-mails that are targetting the addresses of the root account will be forwarded by default to the master e-mail address.
@@ -65,9 +73,9 @@ You can also override the format of the subject line for forwarded e-mails. Duri
 * {accountname} - The name of the account
 * {accountemail} - The root email address of the account
 
-### Account Deletion
+### Account Deletion (Manual Method)
 
-In order to elect to delete an account, simply tag an account within the Organizations console with the following (case not sensitive):
+In order to elect to delete an account without the use of the SSO account manager, simply tag an account within the Organizations console with the following (case not sensitive):
 
 *Tag Key:* **Delete**
 
@@ -87,3 +95,7 @@ Once tagged, a process will perform the following actions on your behalf:
 The above process takes approximately 4 minutes.
 
 If the account more than 7 days old, the process completely remove the account from Organizations. If the account is less than 7 days old, a tag with the key `AccountDeletionTime` will be set with the timestamp the account was deleted at and another tag with the key `ScheduledRemovalTime` will be set with the timestamp the account will be removed from Organizations.
+
+## Architecture
+
+[![Architecture Diagram](assets/arch.svg)](assets/arch.svg)
