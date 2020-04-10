@@ -1062,63 +1062,6 @@ async function handleEmailInbound(page, event) {
             });
         }
 
-        await new Promise(async (resolve, reject) => {
-            var accountid = "?";
-            var accountemail = "?";
-            var accountname= "?";
-            if (account) {
-                accountid = account.Id || "?";
-                accountemail = account.Email || "?";
-                accountname = account.Name || "?";
-            }
-            var msgsubject = msg.subject || "";
-            var from = msg.from || "";
-            var to = msg.to || "";
-
-            msg.subject = process.env.EMAIL_SUBJECT.
-                replace("{subject}", msgsubject).
-                replace("{from}", from).
-                replace("{to}", to).
-                replace("{accountid}", accountid).
-                replace("{accountname}", accountname).
-                replace("{accountemail}", accountemail);
-
-            msg.to = accountemailforwardingaddress || "AWS Accounts Master <" + MASTER_EMAIL + ">";
-            msg.from = "AWS Accounts Master <" + MASTER_EMAIL + ">";
-            msg['return-path'] = "AWS Accounts Master <" + MASTER_EMAIL + ">";
-
-            var stringified = InternetMessage.stringify(msg);
-            
-            ses.sendRawEmail({
-                Source: MASTER_EMAIL,
-                Destinations: [msg.to],
-                RawMessage: {
-                    Data: stringified
-                }
-            }, async function (err, data) {
-                if (err) {
-                    LOG.debug(err);
-
-                    msg.to = "AWS Accounts Master <" + MASTER_EMAIL + ">";
-                    
-                    await ses.sendRawEmail({
-                        Source: MASTER_EMAIL,
-                        Destinations: [MASTER_EMAIL],
-                        RawMessage: {
-                            Data: "To: " + msg.to + "\r\nFrom: " + msg.from + "\r\nSubject: " + msg.subject + "\r\n\r\n***CONTENT NOT PROCESSABLE***\r\n\r\nDownload the email from s3://" + record.s3.bucket.name + "/" + record.s3.object.key + "\r\n"
-                        }
-                    }).promise();
-                }
-
-                resolve();
-            });
-        });
-
-        if (!account) {
-            LOG.debug("No account found, aborting");
-            return;
-        }
-
         let filteredbody = body.replace(/=3D/g, '=').replace(/=\r\n/g, '');
 
         let start = filteredbody.indexOf("https://signin.aws.amazon.com/resetpassword");
@@ -1135,8 +1078,13 @@ async function handleEmailInbound(page, event) {
             let url = filteredbody.substring(start, end);
 
             let parsedurl = new URL(url);
-            if (parsedurl.host != "signin.aws.amazon.com") {
+            if (parsedurl.host != "signin.aws.amazon.com") { // safety
                 throw "Unexpected reset password host";
+            }
+
+            if (!account) { // safety
+                LOG.debug("No account found, aborting");
+                return;
             }
 
             LOG.debug(url);
@@ -1367,7 +1315,59 @@ async function handleEmailInbound(page, event) {
             }
             
         } else {
-            LOG.debug("No password reset found");
+            LOG.debug("No password reset found, forwarding e-mail");
+
+            await new Promise(async (resolve, reject) => {
+                var accountid = "?";
+                var accountemail = "?";
+                var accountname= "?";
+                if (account) {
+                    accountid = account.Id || "?";
+                    accountemail = account.Email || "?";
+                    accountname = account.Name || "?";
+                }
+                var msgsubject = msg.subject || "";
+                var from = msg.from || "";
+                var to = msg.to || "";
+    
+                msg.subject = process.env.EMAIL_SUBJECT.
+                    replace("{subject}", msgsubject).
+                    replace("{from}", from).
+                    replace("{to}", to).
+                    replace("{accountid}", accountid).
+                    replace("{accountname}", accountname).
+                    replace("{accountemail}", accountemail);
+    
+                msg.to = accountemailforwardingaddress || "AWS Accounts Master <" + MASTER_EMAIL + ">";
+                msg.from = "AWS Accounts Master <" + MASTER_EMAIL + ">";
+                msg['return-path'] = "AWS Accounts Master <" + MASTER_EMAIL + ">";
+    
+                var stringified = InternetMessage.stringify(msg);
+                
+                ses.sendRawEmail({
+                    Source: MASTER_EMAIL,
+                    Destinations: [msg.to],
+                    RawMessage: {
+                        Data: stringified
+                    }
+                }, async function (err, data) {
+                    if (err) {
+                        LOG.debug(err);
+    
+                        msg.to = "AWS Accounts Master <" + MASTER_EMAIL + ">";
+                        
+                        await ses.sendRawEmail({
+                            Source: MASTER_EMAIL,
+                            Destinations: [MASTER_EMAIL],
+                            RawMessage: {
+                                Data: "To: " + msg.to + "\r\nFrom: " + msg.from + "\r\nSubject: " + msg.subject + "\r\n\r\n***CONTENT NOT PROCESSABLE***\r\n\r\nDownload the email from s3://" + record.s3.bucket.name + "/" + record.s3.object.key + "\r\n"
+                            }
+                        }).promise();
+                    }
+    
+                    resolve();
+                });
+            });
         }
     }
     
