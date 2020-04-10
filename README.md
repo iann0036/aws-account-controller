@@ -1,6 +1,6 @@
 # AWS Account Controller
 
-> Manage the creation and deletion of sandbox-style accounts
+> Self-service creation and deletion of sandbox-style accounts
 
 <img width="680" height="707" src="https://github.com/iann0036/aws-account-controller/raw/master/assets/accountmanager.png">
 
@@ -10,7 +10,7 @@
 
 The following is required before proceeding:
 
-* An AWS master account that has Organizations enabled
+* An AWS master account that has Organizations and SSO enabled
 * A credit card which will be used to apply payment information to terminated accounts
 * A [2Captcha](https://2captcha.com/) account that is sufficiently topped-up with credit ($10 would be more than enough)
 * A preferred master e-mail address to receive account correspondence to
@@ -53,15 +53,15 @@ In order for you to easily build upon this system, the system makes heavy use of
 
 ### SSO Account Manager
 
-The account manager (as seen at the top of this page) is a custom application that SSO users can access to create accounts or delete previously created accounts on-demand. The application is accessible via the users SSO dashboard:
+The account manager (as seen at the top of this page) is a custom application that SSO users can access to create accounts or delete previously created accounts on-demand. It will be available to any user who is in the `AccountManagerUsers` SSO group. The application is accessible via the users SSO dashboard:
 
 [![SSO Dashboard](assets/sso.png)](assets/sso.png)
 
-The application will ensure only accounts owned by the creator are shown, unless the creator explicitly shares the account with other users. Accounts which are created can optionally require a monthly budget to be set, which if exceeded will automatically trigger a deletion of the account (the maximum budget is an option during installation).
+The application will ensure only accounts owned by the creator are shown, unless the creator explicitly shares the account with other users, in which case it will be shared with all users who are also in the `AccountManagerUsers` SSO group. Accounts which are created can optionally require a monthly budget to be set, which if exceeded will automatically trigger a deletion of the account (the maximum budget is an option during installation).
 
 During installation, if you select `true` for the `Deny Subscription Calls` parameter, a number of calls will be denied to created accounts via an SCP such as calls to create reserved instances, register domain names or apply S3 object locks.
 
-You can also elect not to include the SSO functionality by selecting `false` during installation for the `Enable Account Creation Functionality` parameter.
+You can also elect not to include the SSO functionality by selecting `false` during installation for the `Enable Account Creation Functionality` parameter. You do not require SSO to be enabled within the account if you select this option.
 
 ### E-mail Forwarding
 
