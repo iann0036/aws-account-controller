@@ -484,6 +484,7 @@ Resources:
                           - organizations:ListPolicies
                           - organizations:CreatePolicy
                           - organizations:AttachPolicy
+                          - organizations:RemoveAccountFromOrganization
                           - ses:SendRawEmail
                           - ses:SetActiveReceiptRuleSet
                           - ses:DeleteReceiptRuleSet
