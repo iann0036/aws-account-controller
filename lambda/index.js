@@ -240,6 +240,73 @@ async function createssoapp(page, properties) {
 
     await debugScreenshot(page);
 
+    let accountmanagergroupresult = await rp({
+        uri: 'https://console.aws.amazon.com/singlesignon/api/userpool',
+        method: 'POST',
+        body: JSON.stringify({
+            "method": "POST",
+            "path": "/userpool/",
+            "headers": {
+                "Content-Type": "application/json; charset=UTF-8",
+                "Content-Encoding": "amz-1.0",
+                "X-Amz-Target": "com.amazonaws.swbup.service.SWBUPService.SearchGroups",
+                "X-Amz-Date": dateFormat(new Date(), "GMT:ddd, dd mmm yyyy HH:MM:ss") + " GMT",
+                "Accept": "application/json, text/javascript, */*"
+            },
+            "region": "us-east-1",
+            "operation": "SearchGroups",
+            "contentString": JSON.stringify({
+                "SearchString": "AccountManagerUsers*",
+                "SearchAttributes": [
+                    "GroupName"
+                ],
+                "MaxResults": 100,
+                "NextToken": null
+            })
+        }),
+        headers: {
+            'accept': 'application/json, text/plain, */*',
+            'content-type': 'application/json',
+            'x-csrf-token': csrftoken,
+            'cookie': cookie
+        }
+    });
+
+    let groupid = null;
+    let accountmanagergroups = JSON.parse(accountmanagergroupresult).Groups;
+    if (accountmanagergroups.length == 0) {
+        let creategroupresult = await rp({
+            uri: 'https://console.aws.amazon.com/singlesignon/api/userpool',
+            method: 'POST',
+            body: JSON.stringify({
+                "method": "POST",
+                "path": "/userpool/",
+                "headers": {
+                    "Content-Type": "application/json; charset=UTF-8",
+                    "Content-Encoding": "amz-1.0",
+                    "X-Amz-Target": "com.amazonaws.swbup.service.SWBUPService.CreateGroup",
+                    "X-Amz-Date": dateFormat(new Date(), "GMT:ddd, dd mmm yyyy HH:MM:ss") + " GMT",
+                    "Accept": "application/json, text/javascript, */*"
+                },
+                "region": "us-east-1",
+                "operation": "CreateGroup",
+                "contentString": JSON.stringify({
+                    "GroupName": "AccountManagerUsers"
+                })
+            }),
+            headers: {
+                'accept': 'application/json, text/plain, */*',
+                'content-type': 'application/json',
+                'x-csrf-token': csrftoken,
+                'cookie': cookie
+            }
+        });
+
+        groupid = creategroupresult.Group.GroupId;
+    } else {
+        groupid = accountmanagergroups[0].GroupId;
+    }
+    
     await page.click('.add-custom-application-text');
 
     await page.waitFor(5000);
@@ -352,6 +419,18 @@ async function createssoapp(page, properties) {
     }
 
     await debugScreenshot(page);
+
+    await paneltabs[2].click(); // users and group mappings
+    await page.waitFor(2000);
+
+    await page.click('.assign-users-button');
+    await page.waitFor(5000);
+
+    let paneltabs2 = await page.$$('.awsui-tabs-container > li');
+    await paneltabs2[1].click();
+    await page.waitFor(5000);
+
+    //
 
     await page.click('awsui-button[click="samlSection.saveChanges()"]'); // Save changes
 
@@ -2632,9 +2711,22 @@ exports.handler = async (event, context) => {
         let removed = await removeAccountFromOrg(event.account);
 
         if (removed) {
+            let targetsresponse = await eventbridge.listTargetsByRule({
+                Rule: event.ruleName
+            }).promise();
+
+            for (const target of targetsresponse.Targets) {
+                await eventbridge.removeTargets({
+                    Rule: event.ruleName,
+                    Ids: [target.Id]
+                }).promise();
+            }
+
             await eventbridge.deleteRule({
                 Name: event.ruleName
             }).promise();
+
+            LOG.info("Successfully removed rule");
         }
     } else if (event.Records && event.Records[0] && event.Records[0].s3 && event.Records[0].s3.bucket) {
         browser = await puppeteer.launch({

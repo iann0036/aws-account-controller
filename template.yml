@@ -502,6 +502,8 @@ Resources:
                           - ses:DeleteReceiptRuleSet
                           - events:PutTargets
                           - events:PutRule
+                          - events:ListTargetsByRule
+                          - events:RemoveTargets
                           - events:DeleteRule
                         Resource:
                           - '*'
