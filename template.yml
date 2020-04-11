@@ -20,6 +20,14 @@ Parameters:
           - "true"
           - "false"
 
+    AutoUnsubMarketing:
+        Description: Automatically unsubscribe newly created accounts from all marketing material
+        Type: String
+        Default: "true"
+        AllowedValues:
+          - "true"
+          - "false"
+
     MasterEmail:
         Description: The email address which will receive all root account correspondence (this should NOT be an address of your master domain/subdomain)
         Type: String
@@ -165,6 +173,7 @@ Metadata:
               - HostedZoneId
               - EmailSubjectCustomization
               - RootEmailsToUser
+              - AutoUnsubMarketing
           - Label: 
                 default: "Billing Credit Card"
             Parameters: 
@@ -228,6 +237,8 @@ Metadata:
                 default: "Maximum Monthly Spend Per Account"
             DenySubscriptionCalls:
                 default: "Deny Subscription Calls"
+            AutoUnsubMarketing:
+                default: "Unsubscribe Marketing E-mails"
 
 Conditions:
 
@@ -429,6 +440,7 @@ Resources:
                     ROOT_EMAILS_TO_USER: !Ref RootEmailsToUser
                     MAXIMUM_ACCOUNT_SPEND: !Ref MaximumAccountSpend
                     DENY_SUBSCRIPTION_CALLS: !Ref DenySubscriptionCalls
+                    AUTO_UNSUB_MARKETING: !Ref AutoUnsubMarketing
             Runtime: nodejs12.x
             MemorySize: 1024
             Timeout: 900

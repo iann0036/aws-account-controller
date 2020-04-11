@@ -2390,6 +2390,15 @@ async function handleCreateAccountRequest(event) {
         });
     }
 
+    if (process.env.AUTO_UNSUB_MARKETING == "true") {
+        let unsubbody = `FirstName=&LastName=&Email=${encodeURIComponent(accountemail)}&Company=&Phone=&Country=&preferenceCenterCategory=no&preferenceCenterGettingStarted=no&preferenceCenterOnlineInPersonEvents=no&preferenceCenterMonthlyAWSNewsletter=no&preferenceCenterTrainingandBestPracticeContent=no&preferenceCenterProductandServiceAnnoucements=no&preferenceCenterSurveys=no&PreferenceCenter_AWS_Partner_Events_Co__c=no&preferenceCenterOtherAWSCommunications=no&PreferenceCenter_Language_Preference__c=&Title=&Job_Role__c=&Industry=&Level_of_AWS_Usage__c=&LDR_Solution_Area__c=&Unsubscribed=yes&UnsubscribedReason=&unsubscribedReasonOther=&useCaseMultiSelect=&zOPFormValidationBotVerification=&Website_Referral_Code__c=&zOPURLTrackingTRKCampaign=&zOPEmailValidationHygiene=validate&formid=34006&formVid=34006`;
+
+        await rp({ uri: 'https://pages.awscloud.com/index.php/leadCapture/save2', method: 'POST', body: unsubbody}).catch(err => {
+            LOG.warn("Failed to unsubscribe from marketing communications");
+            LOG.warn(err);
+        });
+    }
+
     await retryWrapper(organizations.tagResource({
         ResourceId: createaccountop.CreateAccountStatus.AccountId,
         Tags: tags
