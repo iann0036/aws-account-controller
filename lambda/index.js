@@ -1708,7 +1708,7 @@ async function addBillingMonitor(page, details) {
     }).promise();
 
     let policyid = null;
-    let policiesdata = await retryWrapper(listPolicies({
+    let policiesdata = await retryWrapper(organizations.listPolicies({
         Filter: 'SERVICE_CONTROL_POLICY'
     }).promise());
     let policies = policiesdata.Policies;
@@ -1728,7 +1728,7 @@ async function addBillingMonitor(page, details) {
     }
     
     if (!policyid) {
-        policydata = await retryWrapper(createPolicy({
+        policydata = await retryWrapper(organizations.createPolicy({
             Content: JSON.stringify({
                 Version: "2012-10-17",
                 Statement: {
