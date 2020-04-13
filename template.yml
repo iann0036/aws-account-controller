@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
-Description: Custom resource provider for the account controller
+Description: Account Controller Solution
 
 Parameters:
 
