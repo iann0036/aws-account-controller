@@ -57,7 +57,7 @@ The account manager (as seen at the top of this page) is a custom application th
 
 [![SSO Dashboard](assets/sso.png)](assets/sso.png)
 
-The application will ensure only accounts owned by the creator are shown, unless the creator explicitly shares the account with other users, in which case it will be shared with all users who are also in the `AccountManagerUsers` SSO group. Accounts which are created can optionally require a monthly budget to be set, which if exceeded will automatically trigger a deletion of the account (the maximum budget is an option during installation).
+The application will ensure only accounts owned by the creator are shown, unless the creator explicitly shares the account with other users, in which case it will be shared with all users who are also in the `AccountManagerUsers` SSO group. Accounts which are created can optionally require a monthly budget to be set, which if exceeded will automatically trigger a deletion of the account (the maximum budget is an option during installation). Note that actual account spend may exceed the budget as pricing metrics can be delayed up to 6 hours or more for some services.
 
 During installation, if you select `true` for the `Deny Subscription Calls` parameter, a number of calls will be denied to created accounts via an SCP such as calls to create reserved instances, register domain names or apply S3 object locks.
 
