@@ -118,3 +118,7 @@ There are some other features and options that may be specified during installat
 ## Architecture
 
 [![Architecture Diagram](assets/arch.svg)](assets/arch.svg)
+
+## Disclaimer
+
+Per the original [post](https://onecloudplease.com/blog/automating-aws-account-deletion), I highly recommend you do not use this in an organization that has production workloads associated with it. It is intended for [developer accounts](https://youtu.be/Fxkbz0OwPKk?t=475) only.
