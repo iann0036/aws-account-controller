@@ -207,14 +207,14 @@ async function retryWrapper(awspromise) {
             resolve(data);
         }).catch(err => {
             if (err.code == "TooManyRequestsException") {
-                LOG.debug("Got TooManyRequestsException, sleeping 2s");
+                LOG.debug("Got TooManyRequestsException, sleeping 5s");
                 setTimeout(() => {
                     retryWrapper(awspromise).then(data => {
                         resolve(data);
                     }).catch(err => {
                         reject(err);
                     });
-                }, 2000); // 2s
+                }, 5000); // 5s
             } else if (err.code == "OptInRequired") {
                 LOG.debug("Got OptInRequired, sleeping 20s");
                 setTimeout(() => {
@@ -1760,6 +1760,8 @@ async function addBillingMonitor(page, details) {
             throw err;
         }
     });
+
+    await new Promise((resolve) => {setTimeout(resolve, 120000)}); // wait for account active
 
     let childcloudwatch = new AWS.CloudWatch({
         accessKeyId: assumedrole.Credentials.AccessKeyId,
