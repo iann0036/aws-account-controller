@@ -1669,7 +1669,10 @@ async function addSubscriptionsSCP(details) {
                         "s3:BypassGovernanceRetention",
                         "s3:PutBucketObjectLockConfiguration",
                         "elasticache:PurchaseReservedCacheNodesOffering",
-                        "redshift:PurchaseReservedNodeOffering"
+                        "redshift:PurchaseReservedNodeOffering",
+                        "savingsplans:CreateSavingsPlan",
+                        "aws-marketplace:AcceptAgreementApprovalRequest",
+                        "aws-marketplace:Subscribe"
                     ],
                     Resource: "*",
                     Condition: {
