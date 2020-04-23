@@ -428,7 +428,7 @@ Resources:
                 S3Key: !If
                     - S3Defined
                     - !Ref S3Key
-                    - 'accountcontroller/process_email_lambda.zip'
+                    - 'accountcontroller/app.zip'
             Handler: index.handler
             Role: !GetAtt LambdaExecutionRole.Arn
             Environment:
