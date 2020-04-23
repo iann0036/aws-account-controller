@@ -4,6 +4,14 @@ Description: Account Controller Solution
 
 Parameters:
 
+    ControlTowerMode:
+        Description: Provision accounts with Control Tower instead of directly with Organizations (requires Control Tower to be set up)
+        Type: String
+        Default: "false"
+        AllowedValues:
+          - "true"
+          - "false"
+
     AccountCreationFunctionality:
         Description: Manage SSO and other features required for account creation functionality
         Type: String
@@ -165,6 +173,7 @@ Metadata:
             Parameters: 
               - AccountCreationFunctionality
               - AccountDeletionFunctionality
+              - ControlTowerMode
           - Label: 
                 default: "Email Configuration"
             Parameters: 
@@ -239,6 +248,8 @@ Metadata:
                 default: "Deny Subscription Calls"
             AutoUnsubMarketing:
                 default: "Unsubscribe Marketing E-mails"
+            ControlTowerMode:
+                default: "Control Tower Mode"
 
 Conditions:
 
@@ -246,6 +257,7 @@ Conditions:
     HostedZoneNotDefined: !Equals [ '', !Ref HostedZoneId ]
     AccountCreationEnabled: !Equals [ 'true', !Ref AccountCreationFunctionality ]
     AccountDeletionEnabled: !Equals [ 'true', !Ref AccountDeletionFunctionality ]
+    ControlTowerModeEnabled: !Equals [ 'true', !Ref ControlTowerMode ]
 
 Mappings:
     RegionMap:
@@ -441,6 +453,8 @@ Resources:
                     MAXIMUM_ACCOUNT_SPEND: !Ref MaximumAccountSpend
                     DENY_SUBSCRIPTION_CALLS: !Ref DenySubscriptionCalls
                     AUTO_UNSUB_MARKETING: !Ref AutoUnsubMarketing
+                    CONTROL_TOWER_MODE: !Ref ControlTowerMode
+                    ROLE: !GetAtt LambdaExecutionRole.Arn
             Runtime: nodejs12.x
             MemorySize: 1024
             Timeout: 900
@@ -489,6 +503,7 @@ Resources:
                           - sts:AssumeRole
                         Resource:
                           - arn:aws:iam::*:role/OrganizationAccountAccessRole
+                          - arn:aws:iam::*:role/AWSControlTowerExecution
                       - Effect: Allow
                         Action:
                           - organizations:ListAccounts
@@ -499,6 +514,7 @@ Resources:
                           - organizations:DescribeOrganization
                           - organizations:ListPolicies
                           - organizations:CreatePolicy
+                          - organizations:UpdatePolicy
                           - organizations:AttachPolicy
                           - organizations:RemoveAccountFromOrganization
                           - ses:SendRawEmail
@@ -509,6 +525,16 @@ Resources:
                           - events:ListTargetsByRule
                           - events:RemoveTargets
                           - events:DeleteRule
+                          - servicecatalog:ProvisionProduct
+                          - servicecatalog:ListProvisioningArtifacts
+                          - servicecatalog:ListLaunchPaths
+                          - servicecatalog:AssociatePrincipalWithPortfolio
+                          - servicecatalog:ListPortfoliosForProduct
+                          - servicecatalog:SearchProductsAsAdmin
+                          - servicecatalog:TerminateProduct
+                          - servicecatalog:DescribeRecord
+                          - iam:GetRole
+                          - !If [ ControlTowerModeEnabled, "*", !Ref 'AWS::NoValue' ] # Not my fault: https://docs.aws.amazon.com/controltower/latest/userguide/setting-up.html#setting-up-iam
                         Resource:
                           - '*'
                       - Effect: Allow

@@ -42,6 +42,7 @@ var ses = new AWS.SES();
 var eventbridge = new AWS.EventBridge();
 var secretsmanager = new AWS.SecretsManager();
 var sts = new AWS.STS();
+var servicecatalog = new AWS.ServiceCatalog();
 
 const CAPTCHA_KEY = process.env.CAPTCHA_KEY;
 const MASTER_EMAIL = process.env.MASTER_EMAIL;
@@ -201,15 +202,15 @@ const debugScreenshot = async (page) => {
     }
 };
 
-async function retryWrapper(awspromise) {
+async function retryWrapper(client, method, params) {
     return new Promise((resolve, reject) => {
-        awspromise.then(data => {
+        client[method](params).promise().then(data => {
             resolve(data);
         }).catch(err => {
             if (err.code == "TooManyRequestsException") {
                 LOG.debug("Got TooManyRequestsException, sleeping 5s");
                 setTimeout(() => {
-                    retryWrapper(awspromise).then(data => {
+                    retryWrapper(client, method, params).then(data => {
                         resolve(data);
                     }).catch(err => {
                         reject(err);
@@ -218,7 +219,7 @@ async function retryWrapper(awspromise) {
             } else if (err.code == "OptInRequired") {
                 LOG.debug("Got OptInRequired, sleeping 20s");
                 setTimeout(() => {
-                    retryWrapper(awspromise).then(data => {
+                    retryWrapper(client, method, params).then(data => {
                         resolve(data);
                     }).catch(err => {
                         reject(err);
@@ -1169,14 +1170,14 @@ async function handleEmailInbound(page, event) {
             email = emailmatches[1];
         }
 
-        data = await retryWrapper(organizations.listAccounts({
+        data = await retryWrapper(organizations, 'listAccounts', {
             // no params
-        }).promise());
+        });
         let accounts = data.Accounts;
         while (data.NextToken) {
-            data = await retryWrapper(organizations.listAccounts({
+            data = await retryWrapper(organizations, 'listAccounts', {
                 NextToken: data.NextToken
-            }).promise());
+            });
     
             accounts = accounts.concat(data.Accounts);
         }
@@ -1188,11 +1189,12 @@ async function handleEmailInbound(page, event) {
         }
 
         var accountemailforwardingaddress = null;
+        var provisionedproductid = null;
 
         if (account) {
-            let orgtags = await retryWrapper(organizations.listTagsForResource({ // TODO: paginate
+            let orgtags = await retryWrapper(organizations, 'listTagsForResource', { // TODO: paginate
                 ResourceId: account.Id
-            }).promise());
+            });
 
             orgtags.Tags.forEach(tag => {
                 if (tag.Key.toLowerCase() == "delete" && tag.Value.toLowerCase() == "true") {
@@ -1200,6 +1202,12 @@ async function handleEmailInbound(page, event) {
                 }
                 if (tag.Key.toLowerCase() == "accountemailforwardingaddress") {
                     accountemailforwardingaddress = tag.Value;
+                }
+                if (tag.Key.toLowerCase() == "accountemailforwardingaddress") {
+                    accountemailforwardingaddress = tag.Value;
+                }
+                if (tag.Key.toLowerCase() == "servicecatalogprovisionedproductid") {
+                    provisionedproductid = tag.Value;
                 }
             });
         }
@@ -1254,6 +1262,14 @@ async function handleEmailInbound(page, event) {
 
             if (isdeletable) {
                 LOG.info("Begun delete account");
+
+                if (provisionedproductid) {
+                    var terminaterecord = await servicecatalog.terminateProvisionedProduct({
+                        TerminateToken: Math.random().toString().substr(2),
+                        IgnoreErrors: true,
+                        ProvisionedProductId: provisionedproductid
+                    }).promise();
+                }
 
                 await loginStage1(page, email);
 
@@ -1410,6 +1426,21 @@ async function handleEmailInbound(page, event) {
 
                     let issuspended = accountstatuspage.includes("\"accountStatus\":\"Suspended\"");
 
+                    if (provisionedproductid) {
+                        let terminatestatus = "CREATED";
+                        while (['CREATED', 'IN_PROGRESS'].includes(terminatestatus)) {
+                            await new Promise((resolve) => {setTimeout(resolve, 10000)});
+
+                            let record = await servicecatalog.describeRecord({
+                                Id: terminaterecord.RecordDetail.RecordId
+                            }).promise();
+                            terminatestatus = record.RecordDetail.Status;
+                        }
+                        if (terminatestatus != "SUCCEEDED") {
+                            throw "Could not terminate product from Service Catalog";
+                        }
+                    }
+
                     if (!issuspended) {
                         await page.goto('https://console.aws.amazon.com/billing/home?#/account', {
                             timeout: 0,
@@ -1441,13 +1472,13 @@ async function handleEmailInbound(page, event) {
 
                         await debugScreenshot(page);
 
-                        await retryWrapper(organizations.tagResource({
+                        await retryWrapper(organizations, 'tagResource', {
                             ResourceId: account.Id,
                             Tags: [{
                                 Key: "AccountDeletionTime",
                                 Value: (new Date()).toISOString()
                             }]
-                        }).promise());
+                        });
                     }
 
                     await removeAccountFromOrg(account);
@@ -1521,9 +1552,9 @@ async function removeAccountFromOrg(account) {
     var threshold = new Date(account.JoinedTimestamp);
     threshold.setDate(threshold.getDate() + 7); // 7 days
     if (now > threshold) {
-        await retryWrapper(organizations.removeAccountFromOrganization({
+        await retryWrapper(organizations, 'removeAccountFromOrganization', {
             AccountId: account.Id
-        }).promise());
+        });
 
         LOG.info("Removed account from Org");
 
@@ -1552,13 +1583,13 @@ async function removeAccountFromOrg(account) {
             }]
         }).promise();
 
-        await retryWrapper(organizations.tagResource({
+        await retryWrapper(organizations, 'tagResource', {
             ResourceId: account.Id,
             Tags: [{
                 Key: "ScheduledRemovalTime",
                 Value: threshold.toISOString()
             }]
-        }).promise());
+        });
 
         LOG.info("Scheduled removal for later");
     }
@@ -1626,17 +1657,22 @@ async function triggerReset(page, event) {
 async function addSubscriptionsSCP(details) {
     LOG.info("Adding subscriptions SCP");
 
+    let rolename = 'OrganizationAccountAccessRole';
+    if (process.env.CONTROL_TOWER_MODE == "true") {
+        rolename = 'AWSControlTowerExecution';
+    }
+
     let policyid = null;
-    let policiesdata = await retryWrapper(organizations.listPolicies({
+    let policiesdata = await retryWrapper(organizations, 'listPolicies', {
         Filter: 'SERVICE_CONTROL_POLICY'
-    }).promise());
+    });
     let policies = policiesdata.Policies;
 
     while (policiesdata.NextToken) {
-        policiesdata = await retryWrapper(organizations.listPolicies({
+        policiesdata = await retryWrapper(organizations, 'listPolicies', {
             Filter: 'SERVICE_CONTROL_POLICY',
             NextToken: policiesdata.NextToken
-        }).promise());
+        });
         policies.concat(policiesdata.Policies);
     }
 
@@ -1649,7 +1685,7 @@ async function addSubscriptionsSCP(details) {
     }
     
     if (!policyid) {
-        policydata = await retryWrapper(organizations.createPolicy({
+        policydata = await retryWrapper(organizations, 'createPolicy', {
             Content: JSON.stringify({
                 Version: "2012-10-17",
                 Statement: {
@@ -1677,7 +1713,7 @@ async function addSubscriptionsSCP(details) {
                     Resource: "*",
                     Condition: {
                         StringNotLike: {
-                            'aws:PrincipalArn': 'arn:aws:iam::*:role/OrganizationAccountAccessRole'
+                            'aws:PrincipalArn': 'arn:aws:iam::*:role/' + rolename
                         }
                     }
                 }
@@ -1685,15 +1721,51 @@ async function addSubscriptionsSCP(details) {
             Description: 'Used to restrict access to create long-term subscriptions',
             Name: 'AccountManagerDenySubscriptionCalls',
             Type: 'SERVICE_CONTROL_POLICY'
-        }).promise());
+        });
         
         policyid = policydata.Policy.PolicySummary.Id;
+    } else {
+        await retryWrapper(organizations, 'updatePolicy', {
+            Content: JSON.stringify({
+                Version: "2012-10-17",
+                Statement: {
+                    Effect: "Deny",
+                    Action: [
+                        "route53domains:RegisterDomain",
+                        "route53domains:RenewDomain",
+                        "route53domains:TransferDomain",
+                        "ec2:ModifyReservedInstances",
+                        "ec2:PurchaseHostReservation",
+                        "ec2:PurchaseReservedInstancesOffering",
+                        "ec2:PurchaseScheduledInstances",
+                        "rds:PurchaseReservedDBInstancesOffering",
+                        "dynamodb:PurchaseReservedCapacityOfferings",
+                        "s3:PutObjectRetention",
+                        "s3:PutObjectLegalHold",
+                        "s3:BypassGovernanceRetention",
+                        "s3:PutBucketObjectLockConfiguration",
+                        "elasticache:PurchaseReservedCacheNodesOffering",
+                        "redshift:PurchaseReservedNodeOffering",
+                        "savingsplans:CreateSavingsPlan",
+                        "aws-marketplace:AcceptAgreementApprovalRequest",
+                        "aws-marketplace:Subscribe"
+                    ],
+                    Resource: "*",
+                    Condition: {
+                        StringNotLike: {
+                            'aws:PrincipalArn': 'arn:aws:iam::*:role/' + rolename
+                        }
+                    }
+                }
+            }),
+            PolicyId: policyid
+        }).catch(() => {});
     }
 
-    await retryWrapper(organizations.attachPolicy({
+    await retryWrapper(organizations, 'attachPolicy', {
         PolicyId: policyid,
         TargetId: details['accountid']
-    }).promise()).catch(err => {
+    }).catch(err => {
         if (err.code == "DuplicatePolicyAttachmentException") {
             LOG.info("Skipping attach subscription SCP, already attached");
         } else {
@@ -1704,23 +1776,28 @@ async function addSubscriptionsSCP(details) {
 
 async function addBillingMonitor(page, details) {
     LOG.info("Adding billing monitor");
+    
+    let rolename = 'OrganizationAccountAccessRole';
+    if (process.env.CONTROL_TOWER_MODE == "true") {
+        rolename = 'AWSControlTowerExecution';
+    }
 
     let assumedrole = await sts.assumeRole({
-        RoleArn: 'arn:aws:iam::' + details['accountid'] + ':role/OrganizationAccountAccessRole',
+        RoleArn: 'arn:aws:iam::' + details['accountid'] + ':role/' + rolename,
         RoleSessionName: 'AccountManagerAddBillingMonitor'
     }).promise();
 
     let policyid = null;
-    let policiesdata = await retryWrapper(organizations.listPolicies({
+    let policiesdata = await retryWrapper(organizations, 'listPolicies', {
         Filter: 'SERVICE_CONTROL_POLICY'
-    }).promise());
+    });
     let policies = policiesdata.Policies;
 
     while (policiesdata.NextToken) {
-        policiesdata = await retryWrapper(organizations.listPolicies({
+        policiesdata = await retryWrapper(organizations, 'listPolicies', {
             Filter: 'SERVICE_CONTROL_POLICY',
             NextToken: policiesdata.NextToken
-        }).promise());
+        });
         policies.concat(policiesdata.Policies);
     }
 
@@ -1731,7 +1808,7 @@ async function addBillingMonitor(page, details) {
     }
     
     if (!policyid) {
-        policydata = await retryWrapper(organizations.createPolicy({
+        policydata = await retryWrapper(organizations, 'createPolicy', {
             Content: JSON.stringify({
                 Version: "2012-10-17",
                 Statement: {
@@ -1740,7 +1817,7 @@ async function addBillingMonitor(page, details) {
                     Resource: "arn:aws:cloudwatch:us-east-1:*:alarm:AccountManagerDeletionBudgetMonitor",
                     Condition: {
                         StringNotLike: {
-                            'aws:PrincipalArn': 'arn:aws:iam::*:role/OrganizationAccountAccessRole'
+                            'aws:PrincipalArn': 'arn:aws:iam::*:role/' + rolename
                         }
                     }
                 }
@@ -1748,15 +1825,32 @@ async function addBillingMonitor(page, details) {
             Description: 'Used to restrict access to the billing alarm',
             Name: 'AccountManagerDenyBillingAlarmAccess',
             Type: 'SERVICE_CONTROL_POLICY'
-        }).promise());
+        });
         
         policyid = policydata.Policy.PolicySummary.Id;
+    } else {
+        await retryWrapper(organizations, 'updatePolicy', {
+            Content: JSON.stringify({
+                Version: "2012-10-17",
+                Statement: {
+                    Effect: "Deny",
+                    Action: "*",
+                    Resource: "arn:aws:cloudwatch:us-east-1:*:alarm:AccountManagerDeletionBudgetMonitor",
+                    Condition: {
+                        StringNotLike: {
+                            'aws:PrincipalArn': 'arn:aws:iam::*:role/' + rolename
+                        }
+                    }
+                }
+            }),
+            PolicyId: policyid
+        }).catch(() => { });
     }
 
-    await retryWrapper(organizations.attachPolicy({
+    await retryWrapper(organizations, 'attachPolicy', {
         PolicyId: policyid,
         TargetId: details['accountid']
-    }).promise()).catch(err => {
+    }).catch(err => {
         if (err.code == "DuplicatePolicyAttachmentException") {
             LOG.info("Skipping attach billing SCP, already attached");
         } else {
@@ -1764,7 +1858,7 @@ async function addBillingMonitor(page, details) {
         }
     });
 
-    await new Promise((resolve) => {setTimeout(resolve, 120000)}); // wait for account active
+    //await new Promise((resolve) => {setTimeout(resolve, 120000)}); // wait for account active
 
     let childcloudwatch = new AWS.CloudWatch({
         accessKeyId: assumedrole.Credentials.AccessKeyId,
@@ -1772,7 +1866,7 @@ async function addBillingMonitor(page, details) {
         sessionToken: assumedrole.Credentials.SessionToken
     });
 
-    let alarm = await retryWrapper(childcloudwatch.putMetricAlarm({
+    let alarm = await retryWrapper(childcloudwatch, 'putMetricAlarm', {
         AlarmName: 'AccountManagerDeletionBudgetMonitor',
         ComparisonOperator: 'GreaterThanThreshold',
         EvaluationPeriods: 1,
@@ -1793,7 +1887,7 @@ async function addBillingMonitor(page, details) {
         Threshold: details['budgetthresholdbeforedeletion'],
         TreatMissingData: 'ignore',
         Unit: 'None'
-    }).promise()); // subject to OptInRequired
+    }); // subject to OptInRequired
 
     LOG.debug(alarm);
     LOG.info("Completed adding billing monitor");
@@ -1943,13 +2037,13 @@ async function setSSOOwner(page, details) {
 
     await debugScreenshot(page);
 
-    await retryWrapper(organizations.tagResource({
+    await retryWrapper(organizations, 'tagResource', {
         ResourceId: details['accountid'],
         Tags: [{
             Key: "SSOCreationComplete",
             Value: "true"
         }]
-    }).promise());
+    });
 }
 
 async function decodeSAMLResponse(sp, idp, samlresponse) {
@@ -2049,22 +2143,22 @@ async function handleGetAccounts(event) {
 
     let useraccounts = [];
 
-    let data = await retryWrapper(organizations.listAccounts({
+    let data = await retryWrapper(organizations, 'listAccounts', {
         // no params
-    }).promise());
+    });
     let accounts = data.Accounts;
     while (data.NextToken) {
-        let moreaccounts = await retryWrapper(organizations.listAccounts({
+        let moreaccounts = await retryWrapper(organizations, 'listAccounts', {
             NextToken: data.NextToken
-        }).promise());
+        });
 
         accounts = accounts.concat(moreaccounts.Accounts);
     }
 
     for (const account of accounts) {
-        let tags = await retryWrapper(organizations.listTagsForResource({ // TODO: paginate
+        let tags = await retryWrapper(organizations, 'listTagsForResource', { // TODO: paginate
             ResourceId: account.Id
-        }).promise());
+        });
 
         let shouldAddToUserAccountsList = false;
         let isdeleted = false;
@@ -2124,19 +2218,19 @@ async function processSnsDeleteAccount(event) {
 
             let accountid = snsmessage.AWSAccountId;
 
-            let account = await retryWrapper(organizations.describeAccount({
+            let account = await retryWrapper(organizations, 'describeAccount', {
                 AccountId: accountid
-            }).promise());
+            });
 
             LOG.info("Deleting account " + accountid + " due to budget alert");
 
-            await retryWrapper(organizations.tagResource({
+            await retryWrapper(organizations, 'tagResource', {
                 ResourceId: account.Account.Id,
                 Tags: [{
                     Key: "Delete",
                     Value: "true"
                 }]
-            }).promise());
+            });
         }
     }
 }
@@ -2151,9 +2245,9 @@ async function handleDeleteAccountRequest(event) {
 
     let user = await getUserBySAML(form['SAMLResponse']);
 
-    let account = await retryWrapper(organizations.describeAccount({
+    let account = await retryWrapper(organizations, 'describeAccount', {
         AccountId: form['accountid']
-    }).promise()).catch(err => {
+    }).catch(err => {
         LOG.debug(err);
 
         return {
@@ -2168,19 +2262,19 @@ async function handleDeleteAccountRequest(event) {
         };
     });
     
-    let tagdata = await retryWrapper(organizations.listTagsForResource({
+    let tagdata = await retryWrapper(organizations, 'listTagsForResource', {
         ResourceId: account.Account.Id
-    }).promise());
+    });
 
     for (const tag of tagdata.Tags) {
         if (tag.Key.toLowerCase() == "accountownerguid" && tag.Value == user.guid) {
-            await retryWrapper(organizations.tagResource({
+            await retryWrapper(organizations, 'tagResource', {
                 ResourceId: account.Account.Id,
                 Tags: [{
                     Key: "Delete",
                     Value: "true"
                 }]
-            }).promise());
+            });
 
             return {
                 "statusCode": 200,
@@ -2311,52 +2405,163 @@ async function handleCreateAccountRequest(event) {
         }
     }
 
-    let createaccountop = await retryWrapper(organizations.createAccount({
-        AccountName: accountname, 
-        Email: accountemail,
-        IamUserAccessToBilling: 'ALLOW',
-        RoleName: 'OrganizationAccountAccessRole'
-    }).promise());
+    let accountid = null;
+    let provisionaccountfromproductop = null;
+    if (process.env.CONTROL_TOWER_MODE == "true") {
+        let productslist = await servicecatalog.searchProductsAsAdmin({
+            Filters: {
+                FullTextSearch: ['AWS Control Tower Account Factory']
+            }
+        }).promise();
 
-    LOG.debug("Created account, waiting for state");
+        if (productslist.ProductViewDetails.length != 1) {
+            return {
+                "statusCode": 503,
+                "isBase64Encoded": false,
+                "headers": {
+                    "Content-Type": "application/json"
+                },
+                "body": JSON.stringify({
+                    'createAccountSuccess': false,
+                    'reason': 'Could not find Account Factory product'
+                })
+            };
+        }
+        
+        let portfoliolist = await servicecatalog.listPortfoliosForProduct({
+            ProductId: productslist.ProductViewDetails[0].ProductViewSummary.ProductId
+        }).promise();
 
-    while (createaccountop.CreateAccountStatus.State == "IN_PROGRESS") {
-        LOG.debug("Account creation still in progress...");
-        await new Promise((resolve) => {setTimeout(resolve, 2000)});
-
-        createaccountop = await retryWrapper(organizations.describeCreateAccountStatus({
-            CreateAccountRequestId: createaccountop.CreateAccountStatus.Id
-        }).promise());
-    }
-
-    if (createaccountop.CreateAccountStatus.State != "SUCCEEDED") {
-        LOG.debug("Account creation failure");
-        LOG.debug(createaccountop);
-
-        let reason = 'The account could not be created for an unknown reason';
-        if (createaccountop.CreateAccountStatus.FailureReason == "ACCOUNT_LIMIT_EXCEEDED") {
-            reason = 'The account could not be created because the Organizational limit has been exceeded';
-        } else if (createaccountop.CreateAccountStatus.FailureReason == "EMAIL_ALREADY_EXISTS") {
-            reason = 'The account could not be created as the email address already exists';
-        } else if (createaccountop.CreateAccountStatus.FailureReason == "INVALID_EMAIL") {
-            reason = 'The account could not be created due to an invalid email address';
-        } else if (createaccountop.CreateAccountStatus.FailureReason == "CONCURRENT_ACCOUNT_MODIFICATION") {
-            reason = 'The account could not be created due to a conflicting operation';
-        } else if (createaccountop.CreateAccountStatus.FailureReason == "INTERNAL_FAILURE") {
-            reason = 'The account could not be created due to an internal failure in the Organizations service';
+        for (let portfolio of portfoliolist.PortfolioDetails) {
+            if (portfolio.DisplayName == "AWS Control Tower Account Factory Portfolio") {
+                await servicecatalog.associatePrincipalWithPortfolio({
+                    PortfolioId: portfolio.Id,
+                    PrincipalType: 'IAM',
+                    PrincipalARN: process.env.ROLE
+                }).promise().then(async () => {
+                    await new Promise((resolve) => {setTimeout(resolve, 2000)}); // eventual consistency issues
+                }).catch(err => {});
+            }
         }
 
-        return {
-            "statusCode": 503,
-            "isBase64Encoded": false,
-            "headers": {
-                "Content-Type": "application/json"
-            },
-            "body": JSON.stringify({
-                'createAccountSuccess': false,
-                'reason': reason
-            })
-        };
+        let artifactlist = await servicecatalog.listProvisioningArtifacts({
+            ProductId: productslist.ProductViewDetails[0].ProductViewSummary.ProductId
+        }).promise();
+
+        let pathlist = await servicecatalog.listLaunchPaths({
+            ProductId: productslist.ProductViewDetails[0].ProductViewSummary.ProductId
+        }).promise();
+
+        provisionaccountfromproductop = await servicecatalog.provisionProduct({
+            PathId: pathlist.LaunchPathSummaries[0].Id,
+            ProductId: productslist.ProductViewDetails[0].ProductViewSummary.ProductId,
+            ProvisionToken: Math.random().toString().substr(2),
+            ProvisionedProductName: "account-" + dateFormat(new Date(), "yyyy-mm-dd-HH-MM-ss-") + Math.random().toString().substr(2,8),
+            ProvisioningArtifactId: artifactlist.ProvisioningArtifactDetails.pop().Id,
+            ProvisioningParameters: [
+                {
+                    Key: 'SSOUserEmail',
+                    Value: user.email
+                },
+                {
+                    Key: 'AccountEmail',
+                    Value: accountemail
+                },
+                {
+                    Key: 'SSOUserFirstName',
+                    Value: user.name.split(" ")[0]
+                },
+                {
+                    Key: 'SSOUserLastName',
+                    Value: user.name.split(" ").pop()
+                },
+                {
+                    Key: 'ManagedOrganizationalUnit',
+                    Value: 'Custom'
+                },
+                {
+                    Key: 'AccountName',
+                    Value: accountname
+                },
+            ]
+        }).promise().catch(err => {
+            LOG.debug(err);
+        });
+
+        let accountsdata = [];
+        let accounts = [];
+
+        while (!accountid) {
+            await new Promise((resolve) => {setTimeout(resolve, 2000)});
+
+            accountsdata = await retryWrapper(organizations, 'listAccounts', {
+                // no params
+            });
+            
+            accounts = accountsdata.Accounts;
+            
+            while (accountsdata.NextToken) {
+                accountsdata = await retryWrapper(organizations, 'listAccounts', {
+                    NextToken: data.NextToken
+                });
+                accounts = accounts.concat(accountsdata.Accounts);
+            }
+            for (let account of accounts) {
+                if (account.Email == accountemail) {
+                    accountid = account.Id;
+                }
+            }
+        }
+    } else {
+        let createaccountop = await retryWrapper(organizations, 'createAccount', {
+            AccountName: accountname, 
+            Email: accountemail,
+            IamUserAccessToBilling: 'ALLOW',
+            RoleName: 'OrganizationAccountAccessRole'
+        });
+
+        LOG.debug("Created account, waiting for state");
+
+        while (createaccountop.CreateAccountStatus.State == "IN_PROGRESS") {
+            LOG.debug("Account creation still in progress...");
+            await new Promise((resolve) => {setTimeout(resolve, 2000)});
+
+            createaccountop = await retryWrapper(organizations, 'describeCreateAccountStatus', {
+                CreateAccountRequestId: createaccountop.CreateAccountStatus.Id
+            });
+        }
+
+        if (createaccountop.CreateAccountStatus.State != "SUCCEEDED") {
+            LOG.debug("Account creation failure");
+            LOG.debug(createaccountop);
+
+            let reason = 'The account could not be created for an unknown reason';
+            if (createaccountop.CreateAccountStatus.FailureReason == "ACCOUNT_LIMIT_EXCEEDED") {
+                reason = 'The account could not be created because the Organizational limit has been exceeded';
+            } else if (createaccountop.CreateAccountStatus.FailureReason == "EMAIL_ALREADY_EXISTS") {
+                reason = 'The account could not be created as the email address already exists';
+            } else if (createaccountop.CreateAccountStatus.FailureReason == "INVALID_EMAIL") {
+                reason = 'The account could not be created due to an invalid email address';
+            } else if (createaccountop.CreateAccountStatus.FailureReason == "CONCURRENT_ACCOUNT_MODIFICATION") {
+                reason = 'The account could not be created due to a conflicting operation';
+            } else if (createaccountop.CreateAccountStatus.FailureReason == "INTERNAL_FAILURE") {
+                reason = 'The account could not be created due to an internal failure in the Organizations service';
+            }
+
+            return {
+                "statusCode": 503,
+                "isBase64Encoded": false,
+                "headers": {
+                    "Content-Type": "application/json"
+                },
+                "body": JSON.stringify({
+                    'createAccountSuccess': false,
+                    'reason': reason
+                })
+            };
+        }
+
+        accountid = createaccountop.CreateAccountStatus.AccountId;
     }
 
     let tags = [
@@ -2369,6 +2574,13 @@ async function handleCreateAccountRequest(event) {
             Value: "false"
         }
     ];
+
+    if (process.env.CONTROL_TOWER_MODE == "true") {
+        tags.push({
+            Key: "ServiceCatalogProvisionedProductId",
+            Value: provisionaccountfromproductop.RecordDetail.ProvisionedProductId
+        });
+    }
 
     if (notes.length > 0) {
         tags.push({
@@ -2404,10 +2616,10 @@ async function handleCreateAccountRequest(event) {
         });
     }
 
-    await retryWrapper(organizations.tagResource({
-        ResourceId: createaccountop.CreateAccountStatus.AccountId,
+    await retryWrapper(organizations, 'tagResource', {
+        ResourceId: accountid,
         Tags: tags
-    }).promise());
+    });
 
     return {
         "statusCode": 200,
@@ -2640,7 +2852,7 @@ function wrapHTML(user) {
                 success: function(response) {
                     $('#alerts').append(\`
                         <div class="alert alert-success alert-dismissible fade show" role="alert">
-                        <strong>Account Created</strong> Your AWS account has been created successfully. It will be available to use via SSO in a couple of minutes.
+                        <strong>Account Created</strong> Your AWS account has been created successfully. It will be available to use via SSO in a few minutes.
                         <button type="button" class="close" data-dismiss="alert" aria-label="Close">
                             <span aria-hidden="true">&times;</span>
                         </button>
@@ -2730,9 +2942,9 @@ exports.handler = async (event, context) => {
         });
 
         if (isdeletable && process.env.DELETION_FUNCTIONALITY_ENABLED == "true") {
-            let data = await retryWrapper(organizations.describeAccount({
+            let data = await retryWrapper(organizations, 'describeAccount', {
                 AccountId: event.detail.requestParameters.resourceId
-            }).promise());
+            });
 
             browser = await puppeteer.launch({
                 args: chromium.args,
