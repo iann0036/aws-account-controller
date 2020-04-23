@@ -2898,6 +2898,7 @@ function wrapHTML(user) {
                 
                 $('#delete-account-confirmation-text').html(accountname + " (" + accountid + ")");
                 $('#delete-account-confirmation-button').attr('data-accountid', accountid);
+                $('#delete-account-confirmation-button').removeAttr('disabled');
             });
 
             $('#delete-account-confirmation-button').click(function (event) {
