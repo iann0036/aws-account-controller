@@ -114,6 +114,7 @@ There are some other features and options that may be specified during installat
 * `Automation IAM User Username` - sets a custom username for the IAM user used to perform Connect and/or SSO functions
 * `Maximum Monthly Spend Per Account` - enforces a custom upper limit on the monthly budget new accounts can request, or disables budgets completely
 * `Deny Subscription Calls` - if set to `true`, a service control policy which restricts the use of subscription-based calls, like reserved instances, will be applied to new accounts
+* `Control Tower Mode` - if set to `true`, accounts will be created with the Control Tower Account Factory, rather than via Organizations directly
 
 ## Architecture
 

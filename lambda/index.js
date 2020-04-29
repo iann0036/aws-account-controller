@@ -11,7 +11,7 @@ CreateConnect Event:
 ResetEmail Event:
 
 {
-  "email": "example7@awsaccounts.ian.mn"
+  "email": "example7@yourdomain.com"
 }
 
 */
@@ -1343,8 +1343,15 @@ async function handleEmailInbound(page, event) {
                     await portalphonenumber.press('Backspace');
                     await portalphonenumber.type(variables['PHONE_NUMBER'].replace("+1", ""), { delay: 100 });
 
+                    var phonecode = "";
+                    var phonecodetext = "";
                     var captchanotdone = true;
+                    var captchaattemptsfordiva = 0;
                     while (captchanotdone) {
+                        captchaattemptsfordiva += 1;
+                        if (captchaattemptsfordiva > 5) {
+                            throw "Could not confirm phone number verification - possible error in DIVA system or credit card";
+                        }
                         try {
                             let submitc = await page.$('#btnCall');
 
@@ -1372,15 +1379,19 @@ async function handleEmailInbound(page, event) {
                             await debugScreenshot(page);
 
                             await page.waitForSelector('.phone-pin-number', {timeout: 5000});
-                            
-                            captchanotdone = false;
+
+                            phonecode = await page.$('.phone-pin-number > span');
+                            phonecodetext = await page.evaluate(el => el.textContent, phonecode);
+
+                            if (phonecodetext.trim().length == 4) {
+                                captchanotdone = false;
+                            } else {
+                                await page.waitFor(5000);
+                            }
                         } catch (error) {
                             LOG.error(error);
                         }
                     }
-
-                    let phonecode = await page.$('.phone-pin-number > span');
-                    let phonecodetext = await page.evaluate(el => el.textContent, phonecode);
 
                     await debugScreenshot(page);
                                 
@@ -1393,7 +1404,7 @@ async function handleEmailInbound(page, event) {
                         Overwrite: true
                     }).promise();
 
-                    await page.waitFor(20000);
+                    await page.waitFor(30000);
                     
                     await debugScreenshot(page);
 
