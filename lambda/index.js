@@ -602,7 +602,7 @@ async function open(page, properties) {
 
     await page.waitFor(5000);
 
-    let loginbutton = await page.$('a[ng-show="org.organizationId"]');
+    let loginbutton = await page.$('.emergency-access a');
     let loginlink = await page.evaluate((obj) => {
         return obj.getAttribute('href');
     }, loginbutton);
