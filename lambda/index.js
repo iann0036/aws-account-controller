@@ -808,7 +808,7 @@ async function createflow(page, properties, prompts) {
 
     await debugScreenshot(page);
 
-    await page.click('li[ng-if="cfImportExport"]');
+    await page.click('#cf-dropdown a[ng-click="verifyImport()"]');
 
     await page.waitFor(500);
 
@@ -3089,7 +3089,7 @@ exports.handler = async (event, context) => {
                     'Domain': domain
                 });
                 let hostx = new url.URL(await page.url()).host;
-                while (hostx.indexOf('awsapps') == -1) {
+                while (hostx.indexOf(domain) == -1) {
                     await page.waitFor(20000);
                     await open(page, {
                         'Domain': domain
