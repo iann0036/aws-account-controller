@@ -1759,7 +1759,8 @@ async function addSubscriptionsSCP(details) {
                         "redshift:PurchaseReservedNodeOffering",
                         "savingsplans:CreateSavingsPlan",
                         "aws-marketplace:AcceptAgreementApprovalRequest",
-                        "aws-marketplace:Subscribe"
+                        "aws-marketplace:Subscribe",
+                        "shield:CreateSubscription"
                     ],
                     Resource: "*",
                     Condition: {
