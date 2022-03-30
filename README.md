@@ -1,5 +1,7 @@
 # AWS Account Controller
 
+## Update March 2022: This is now largely deprecated due to the [CloseAccount](https://docs.aws.amazon.com/organizations/latest/APIReference/API_CloseAccount.html) method
+
 > Self-service creation and deletion of sandbox-style accounts
 
 <img width="680" height="707" src="https://github.com/iann0036/aws-account-controller/raw/master/assets/accountmanager.png">
